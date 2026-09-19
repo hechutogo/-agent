@@ -1,0 +1,29 @@
+# ===== 敏感配置 =====
+# .env 含真实 LLM API Key，严禁入库；仅保留 .env.example 模板
+.env
+.env.*
+!.env.example
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ===== 本地 conda 环境与包缓存（数 GB，仅本机使用） =====
+miniforge3/
+conda-pkgs/
+pip-cache/
+
+# ===== ManiSkill 运行时下载的机器人资产（MS_ASSET_DIR） =====
+maniskill_data/
+
+# ===== IDE / 工具目录 =====
+.trae/
+.vscode/
+.idea/
+
+# ===== 仿真运行产物 =====
+*.log
+*.mp4
+rendered_*.png
