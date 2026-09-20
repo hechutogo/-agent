@@ -32,6 +32,31 @@ def test_verify_state_failure_when_placement_differs():
     assert r.success is False and r.error_kind == "verify"
 
 
+def test_verify_state_accepts_box_when_target_occluded_after_placing():
+    # A prior grounded observation placed A inside the box; the stacked A is
+    # now occluded and can no longer be located, but the goal is achieved.
+    locate = FakeLocate({"A": [0.085, -0.31, 0.745],
+                         "box": [0.085, -0.30, 0.726]})
+    ctx = make_context(FakeSim(), FakeKin(), locate)
+    FindObject().call(ctx, {"target": "box"})
+    FindObject().call(ctx, {"target": "A"})
+    assert ctx.state.objects["A"].placement == "box"
+    locate.fail_on.add("A")  # stacked/occluded during verification
+    r = VerifyState().call(ctx, {"target": "A", "at": "box"})
+    assert r.success is True and r.observed["placement"] == "box"
+
+
+def test_verify_state_still_fails_when_lost_and_last_known_on_table():
+    locate = FakeLocate({"A": [-0.085, -0.34, 0.739],
+                         "box": [0.085, -0.30, 0.726]})
+    ctx = make_context(FakeSim(), FakeKin(), locate)
+    FindObject().call(ctx, {"target": "A"})
+    assert ctx.state.objects["A"].placement == "table"
+    locate.fail_on.add("A")
+    r = VerifyState().call(ctx, {"target": "A", "at": "box"})
+    assert r.success is False and r.error_kind == "lost_object"
+
+
 def test_set_gripper_close_updates_state_and_jaw():
     sim = FakeSim()
     ctx = make_context(sim, FakeKin(), FakeLocate({}))

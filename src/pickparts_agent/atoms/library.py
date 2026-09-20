@@ -58,17 +58,32 @@ class VerifyState(Atom):
     def run(self, ctx, args):
         target, at = args["target"], args["at"]
         frame_id = ctx.state.tick()
+        ctx.sim.hold(10)  # let a released/stacked object settle before judging
         frame = ctx.sim.observe()
         try:
             box = ctx.locate(frame, "box")
             ctx.state.apply_observation("box", box, frame_id)
-            loc = ctx.locate(frame, target)
         except Exception as exc:
             return AtomResult(False, "lost_object",
-                              f"校验时丢失目标（{type(exc).__name__}）")
-        rec = ctx.state.apply_observation(target, loc, frame_id)
+                              f"校验时丢失盒子（{type(exc).__name__}）")
+        try:
+            loc = ctx.locate(frame, target)
+            rec = ctx.state.apply_observation(target, loc, frame_id)
+            placement = rec.placement
+            occluded = False
+        except Exception as exc:
+            # The target is not visible (stacked/occluded inside the box).
+            # Trust the last grounded fact when it already places the target
+            # where expected, instead of re-grasping an achieved goal.
+            prior = ctx.state.objects.get(target)
+            if at == "box" and prior is not None and prior.placement == "box":
+                placement = "box"
+                occluded = True
+            else:
+                return AtomResult(False, "lost_object",
+                                  f"校验时丢失目标（{type(exc).__name__}）")
         return AtomResult(True, observed={
-            "placement": rec.placement, "expected": at})
+            "placement": placement, "expected": at, "occluded": occluded})
 
     def verify(self, ctx, args, result):
         placement = result.observed.get("placement")
