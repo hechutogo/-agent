@@ -1914,7 +1914,7 @@ class ReActExecutor:
             self._emit({"type": "step", "index": pointer, "status": "failed"})
             react_iters += 1
             if react_iters > MAX_REACT_ITERS:
-                return self._fail("反思次数耗尽，仍未完成，请重置后重试。")
+                return self._fail("反思预算耗尽，仍未完成，请重置后重试。")
             llm_calls += 1
             if llm_calls > MAX_LLM_CALLS:
                 return self._fail("LLM 调用预算耗尽，请简化或重置。")

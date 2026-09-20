@@ -108,3 +108,47 @@ def test_replan_succeeds_with_new_plan():
     result = executor.execute(
         Plan(True, [], [{"atom": "flaky", "args": {}}], ""), "goal")
     assert result["success"] and flaky.calls == 2
+
+
+def retry_chat():
+    return FakeChat([
+        {"thought": "", "decision": "retry", "steps": []},
+        {"thought": "", "decision": "retry", "steps": []},
+        {"thought": "", "decision": "retry", "steps": []},
+        {"thought": "", "decision": "retry", "steps": []},
+    ])
+
+
+def test_react_budget_exhausted():
+    flaky = FlakyAtom(99)  # always fails
+    executor, _ = build(flaky, retry_chat())
+    result = executor.execute(
+        Plan(True, [], [{"atom": "flaky", "args": {}}], ""), "goal")
+    assert result["success"] is False and "预算" in result["message"]
+    assert flaky.calls == 5  # 4 retries allowed, 5th failure terminates
+
+
+def test_fatal_aborts_without_retry():
+    flaky = FlakyAtom(99, kind="fatal")
+    chat = FakeChat([{"thought": "", "decision": "retry", "steps": []}])
+    executor, _ = build(flaky, chat)
+    result = executor.execute(
+        Plan(True, [], [{"atom": "flaky", "args": {}}], ""), "goal")
+    assert result["success"] is False
+    assert flaky.calls == 1  # reactor override forces abort immediately
+
+
+def test_llm_budget_exhausted_on_repeated_replan():
+    flaky = FlakyAtom(99)
+    cycle = [
+        {"thought": "", "decision": "replan", "steps": []},
+        {"feasible": True, "blockers": [],
+         "steps": [{"atom": "flaky", "args": {}}], "rationale": ""},
+    ]
+    # 3 full cycles (6 responses) then a 4th reactor response (7th) -> LLM=9.
+    chat = FakeChat(cycle * 3 + [cycle[0]])
+    executor, _ = build(flaky, chat)
+    result = executor.execute(
+        Plan(True, [], [{"atom": "flaky", "args": {}}], ""), "goal")
+    assert result["success"] is False
+    assert "LLM" in result["message"] and flaky.calls == 4
