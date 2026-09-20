@@ -1512,7 +1512,7 @@ def test_feasible_plan_returns_validated_steps():
                       "rationale": "all visible"}])
     plan = planner(chat).analyze("把 A 放进盒子", WorldState())
     assert plan.feasible and len(plan.steps) == 8
-    assert "find_object" in chat.calls[0]["user"]
+    assert "find_object" in chat.calls[0]["system"]
 
 
 def test_infeasible_returns_blockers_and_no_steps():
@@ -1560,8 +1560,8 @@ SYSTEM_PROMPT = """你是机器人任务规划者。先判断可行性与前置�
 {catalog}
 
 输出 JSON：
-{"feasible":true,"blockers":[{"need":"...","reason":"..."}],
-"steps":[{"atom":"...","args":{}}],"rationale":"..."}"""
+{{"feasible":true,"blockers":[{{"need":"...","reason":"..."}}],
+"steps":[{{"atom":"...","args":{{}}}}],"rationale":"..."}}"""
 
 
 class Plan:
@@ -1591,7 +1591,7 @@ class Planner:
                 self.registry.validate_call(call)
         except (LLMError, ValueError):
             return Plan(False, [{"need": "重新描述",
-                                 "reason": "规划器未能理解或返回了非法计划"}], [])
+                                 "reason": "规划器未能理解或返回了非法计划"}], [], "")
         blockers = data.get("blockers", [])
         if not isinstance(blockers, list):
             blockers = []
