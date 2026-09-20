@@ -6,10 +6,19 @@ from .llm import LLMError
 _KINDS = {"retry", "replace", "replan", "ask_user", "abort"}
 
 SYSTEM_PROMPT = """你在监控机器人执行。给定失败原子、错误类型、观测事实和当前计划，\
-选择下一步：retry（可在 steps 中先插入刷新动作）、replace（用 steps 替换当前原子）、\
-replan（重规划剩余任务）、ask_user（向用户提问）、abort（停止并上报）。\
-fatal 安全错误必须 abort，不得重试。严禁输出坐标。只输出 JSON：
-{"thought":"...","decision":"retry","steps":[],"reason":"...","question":"..."}"""
+选择下一步：retry（在 steps 中先插入若干原子，再重试当前原子）、\
+replace（用 steps 中的原子替换当前原子）、replan（重规划剩余任务，steps 必须为空）、\
+ask_user（向用户提问）、abort（停止并上报）。\
+steps 里只能使用下面目录中真实存在的原子名，需要刷新定位时用 find_object，\
+不要臆造原子名。fatal 安全错误必须 abort，不得重试。严禁输出坐标。
+
+可用原子：
+{catalog}
+
+只输出 JSON：
+{{"thought":"...","decision":"retry",\
+"steps":[{{"atom":"find_object","args":{{"target":"A"}}}}],\
+"reason":"...","question":"..."}}"""
 
 
 class Decision:
@@ -39,7 +48,8 @@ class Reactor:
             "world": state.snapshot(),
         }, ensure_ascii=False)
         try:
-            data = self.chat.json(SYSTEM_PROMPT, user)
+            system = SYSTEM_PROMPT.format(catalog=self.registry.catalog_for_prompt())
+            data = self.chat.json(system, user)
             kind = data.get("decision")
             if kind not in _KINDS:
                 raise ValueError("bad decision kind")
