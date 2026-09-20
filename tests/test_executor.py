@@ -47,3 +47,64 @@ def test_happy_path_emits_plan_steps_and_finish():
     types = [e["type"] for e in events]
     assert result["success"] is True
     assert types == ["plan", "step", "step", "finish"]
+
+
+def test_retry_refreshes_then_succeeds():
+    events = []
+    flaky = FlakyAtom(1)  # first call fails
+    chat = FakeChat([
+        {"thought": "刷新", "decision": "retry", "reason": "重新定位",
+         "steps": [{"atom": "find_object", "args": {"target": "A"}}]},
+    ])
+    executor, _ = build(flaky, chat)
+    executor.on_event = events.append
+    plan = Plan(True, [], [{"atom": "flaky", "args": {}}], "")
+    result = executor.execute(plan, "goal")
+    assert result["success"] and flaky.calls == 2
+    assert any(e["type"] == "react" and e["decision"] == "retry" for e in events)
+
+
+def test_replace_swaps_in_alt_atom():
+    class AltAtom(Atom):
+        name = "alt"
+        description = "alt"
+        parameters = {"type": "object"}
+        ran = 0
+
+        def check_pre(self, ctx, args):
+            return Check(True)
+
+        def run(self, ctx, args):
+            AltAtom.ran += 1
+            return AtomResult(True, message="alt-ok")
+
+        def verify(self, ctx, args, result):
+            return Check(True)
+
+    alt = AltAtom()
+    flaky = FlakyAtom(1)
+    chat = FakeChat([
+        {"thought": "换方案", "decision": "replace", "reason": "用 alt",
+         "steps": [{"atom": "alt", "args": {}}]},
+    ])
+    registry = AtomRegistry([flaky, alt, FindObject()])
+    locate = FakeLocate({"A": [-0.08, -0.34, 0.74]})
+    executor = ReActExecutor(
+        FakeSim(), locate, FakeKin(), registry, WorldState(),
+        Planner(chat, registry), Reactor(chat, registry))
+    result = executor.execute(
+        Plan(True, [], [{"atom": "flaky", "args": {}}], ""), "goal")
+    assert result["success"] and flaky.calls == 1 and AltAtom.ran == 1
+
+
+def test_replan_succeeds_with_new_plan():
+    flaky = FlakyAtom(1)
+    chat = FakeChat([
+        {"thought": "重规划", "decision": "replan", "steps": []},
+        {"feasible": True, "blockers": [],
+         "steps": [{"atom": "flaky", "args": {}}], "rationale": ""},
+    ])
+    executor, _ = build(flaky, chat)
+    result = executor.execute(
+        Plan(True, [], [{"atom": "flaky", "args": {}}], ""), "goal")
+    assert result["success"] and flaky.calls == 2
