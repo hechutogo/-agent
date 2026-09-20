@@ -1,0 +1,13 @@
+from pickparts_agent.atoms import build_default_registry
+
+EXPECTED = {"find_object", "reach_above", "grasp", "lift", "carry_to",
+            "release_into", "verify_state", "reset_arm", "set_gripper"}
+
+
+def test_default_registry_registers_all_nine_atoms():
+    registry = build_default_registry()
+    assert set(registry.atoms) == EXPECTED
+
+
+def test_catalog_is_non_empty_text():
+    assert "find_object" in build_default_registry().catalog_for_prompt()
