@@ -14,14 +14,14 @@ from openai import OpenAI
 from PIL import Image
 import pytest
 
-from pickparts_agent.perception import Frame
+from pickparts_agent.scene.perception import Frame
 
 
 @pytest.fixture
 def cloud():
     # Missing implementation is an explicit test failure during the first red run.
     try:
-        return importlib.import_module("pickparts_agent.cloud")
+        return importlib.import_module("pickparts_agent.services.cloud")
     except ModuleNotFoundError as exc:
         pytest.fail(f"Cloud implementation is missing: {exc}")
 
@@ -126,12 +126,82 @@ def test_cloud_rejects_invalid_depth(cloud, frame, depth):
             cloud.CloudPerception(client, "vision").locate(frame, "box")
 
 
-def test_cloud_rejects_unknown_target_without_network(cloud, frame):
+def test_cloud_locates_open_description_without_hardcoded_color(cloud, frame):
     requests = []
-    with remote_client("{}", requests) as client:
-        with pytest.raises(ValueError):
-            cloud.CloudPerception(client, "vision").locate(frame, "C")
-    assert not requests
+    payload = '{"visible": true, "bbox": [1,1,4,4], "confidence": 0.9}'
+    with remote_client(payload, requests) as client:
+        result = cloud.CloudPerception(client, "vision").locate(frame, "黄色圆柱 C")
+    assert result["confidence"] == .9
+    assert "黄色圆柱 C" in json.loads(requests[0].content)["messages"][0]["content"][0]["text"]
+
+
+@pytest.fixture
+def generic_frame():
+    return Frame(
+        rgb=np.full((24, 44, 3), 100, dtype=np.uint8),
+        depth=np.full((24, 44), .7),
+        intrinsic=np.diag([100., 100., 1.]),
+        camera_to_base=np.eye(4),
+        qpos=np.zeros(2), qvel=np.zeros(2),
+    )
+
+
+@pytest.mark.parametrize("target,refine_color", [
+    ("gray cylinder", True), ("A", False),
+])
+@pytest.mark.parametrize("valid_pixels", [1, 600])
+def test_generic_bbox_rejects_insufficient_depth_coverage(
+        cloud, generic_frame, target, refine_color, valid_pixels):
+    # Valid depth outside the 800-pixel bbox cannot rescue sparse measurements.
+    region = generic_frame.depth[2:22, 2:42]
+    region[:] = np.nan
+    region.flat[:valid_pixels] = .7
+    payload = '{"visible": true, "bbox": [2,2,42,22], "confidence": 0.99}'
+    with remote_client(payload, []) as client:
+        with pytest.raises(cloud.PerceptionError, match="depth coverage"):
+            cloud.CloudPerception(client, "vision", refine_color=refine_color).locate(
+                generic_frame, target)
+
+
+@pytest.mark.parametrize("target,refine_color", [
+    ("gray cylinder", True), ("A", False),
+])
+@pytest.mark.parametrize("other_depth", [.9, .72, .7])
+def test_generic_bbox_rejects_disconnected_depth_surfaces(
+        cloud, generic_frame, target, refine_color, other_depth):
+    generic_frame.depth[2:22, 22:42] = other_depth
+    if other_depth == .7:
+        # Even coplanar islands must not become a target in the unmeasured gap.
+        generic_frame.depth[2:22, 21:23] = np.nan
+    payload = '{"visible": true, "bbox": [2,2,42,22], "confidence": 0.99}'
+    with remote_client(payload, []) as client:
+        with pytest.raises(cloud.PerceptionError, match="depth surfaces"):
+            cloud.CloudPerception(client, "vision", refine_color=refine_color).locate(
+                generic_frame, target)
+
+
+@pytest.mark.parametrize("target,refine_color", [
+    ("gray cylinder", True), ("A", False),
+])
+@pytest.mark.parametrize("outliers", [False, True])
+def test_generic_bbox_projects_coherent_measured_surface(
+        cloud, generic_frame, target, refine_color, outliers):
+    generic_frame.depth[:2] = 10.  # Outside bbox.
+    if outliers:
+        generic_frame.depth[2, 2] = np.nan
+        generic_frame.depth[21, 41] = np.nan
+        generic_frame.depth[2, 41] = .9
+        generic_frame.depth[21, 2] = .9
+    payload = '{"visible": true, "bbox": [2,2,42,22], "confidence": 0.99}'
+    with remote_client(payload, []) as client:
+        result = cloud.CloudPerception(client, "vision", refine_color=refine_color).locate(
+            generic_frame, target)
+    assert result["bbox"] == [2, 2, 42, 22]
+    assert result["refinement"] == "none"
+    np.testing.assert_allclose(result["point"], [.1505, .0805, .7])
+    assert result["top_z"] == pytest.approx(.7)
+    assert result["bottom_z"] == pytest.approx(.7)
+    assert result["extent"][2] == pytest.approx(0.)
 
 
 def test_asr_uses_cloud_audio_upload(cloud, tmp_path):
@@ -201,7 +271,7 @@ def test_cli_missing_config_exits_before_simulation():
 
 def test_save_frame_writes_rgb_and_metric_depth(frame, tmp_path):
     try:
-        app = importlib.import_module("pickparts_agent.app")
+        app = importlib.import_module("pickparts_agent.interfaces.cli")
     except ModuleNotFoundError as exc:
         pytest.fail(f"CLI implementation is missing: {exc}")
     app.save_frame(frame, tmp_path)
@@ -284,7 +354,7 @@ def test_cli_rejects_invalid_arguments_before_loading_runtime(args):
     ["--smoke"], ["--demo", "A", "B"], [],
 ])
 def test_cli_viewer_is_opt_in_and_composes_with_modes(args):
-    from pickparts_agent.app import _parser
+    from pickparts_agent.interfaces.cli import _parser
 
     assert _parser().parse_args(args).view is False
     assert _parser().parse_args([*args, "--view"]).view is True

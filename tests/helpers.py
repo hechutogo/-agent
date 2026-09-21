@@ -1,9 +1,9 @@
 """Deterministic test doubles. No physics, network, or real cloud."""
 import numpy as np
 
-from pickparts_agent.atoms.base import AtomContext
-from pickparts_agent.kinematics import ARM_NAMES
-from pickparts_agent.state import WorldState
+from pickparts_agent.agent.atoms.base import AtomContext
+from pickparts_agent.scene.kinematics import ARM_NAMES
+from pickparts_agent.agent.state import WorldState
 
 
 class FakeFrame:
@@ -83,8 +83,11 @@ class FakeLocate:
         self.calls.append(target)
         if target in self.fail_on or target not in self.points:
             raise ValueError(f"{target} is not visible")
-        return {"bbox": self.bbox, "point": self.points[target],
-                "confidence": self.confidence}
+        result = {"bbox": self.bbox, "point": self.points[target],
+                  "confidence": self.confidence}
+        if target == "box":
+            result.update(extent=[.096, .09, .039], bottom_z=.72, top_z=.759)
+        return result
 
 
 class FakeChat:

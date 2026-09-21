@@ -1,5 +1,5 @@
-from pickparts_agent.orchestrator import Orchestrator
-from pickparts_agent.planner import Plan
+from pickparts_agent.agent.orchestrator import Orchestrator
+from pickparts_agent.agent.planner import Plan
 
 
 class StubPlanner:
@@ -54,7 +54,7 @@ def test_two_turns_share_same_world_state():
     plan = Plan(True, [], [], "")
     planner = StubPlanner(plan)
     executor = StubExecutor({"success": True, "message": "ok"})
-    from pickparts_agent.state import WorldState
+    from pickparts_agent.agent.state import WorldState
     state = WorldState()
     orch = Orchestrator(state, object(), planner, object(), executor)
     orch.turn("第一个任务")

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PickParts · 具身 Agent 控制台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="/" aria-label="PickParts 首页"><span class="brand-icon">⌘</span> PickParts <span class="brand-tag">LAB</span></a>
+    <div class="header-right"><span class="live-dot" id="connection-dot"></span><span id="connection">正在连接</span><span class="separator"></span><span>XLeRobot v0.3</span></div>
+  </header>
+  <main>
+    <div class="intro">
+      <div><div class="eyebrow">EMBODIED AGENT / WORKSPACE 01</div><h1>从一句话，到一次行动<span>。</span></h1><p>和你的机器人对话，在真实仿真中观察每一步。</p></div>
+    </div>
+    <div class="workspace">
+      <section class="scene-panel" id="scene-panel" aria-label="仿真现场与动作进程">
+        <div class="panel-heading"><h2><span class="tiny-square"></span> 仿真现场</h2><span class="pill" id="scene-status">初始化中</span></div>
+        <div class="scene-toolbar" role="group" aria-label="场景操作">
+          <button id="add-block" class="secondary" type="button" disabled aria-label="添加一个方块">+ 添加方块</button>
+          <button id="add-box" class="secondary" type="button" disabled aria-label="添加一个盒子">+ 添加盒子</button>
+          <button id="reset" class="secondary" type="button" disabled aria-label="重置并随机布局场景">↻ 随机重置</button>
+        </div>
+        <div class="camera">
+          <canvas id="camera" width="640" height="480" aria-label="仿真 RGB 相机实时画面"></canvas>
+          <div id="camera-loading"><span class="loader"></span><strong>正在连接仿真相机</strong><span>初始化机器人与桌面场景</span></div>
+          <div class="camera-label"><span class="live-dot"></span> RGB CAMERA <span>01</span></div>
+          <div class="camera-bottom"><span>WORKSPACE VIEW</span><span id="frame-label">等待首帧</span></div>
+        </div>
+        <div class="scene-legend" aria-label="场景物体图例">
+          <div id="scene-objects" class="scene-objects" role="list" aria-label="物体名称与 ID"></div>
+          <span id="legend-empty">等待场景物体…</span>
+          <span class="legend-note">640 × 480 · RGB-D</span>
+        </div>
+        <div class="execution">
+          <div class="execution-title"><h2>动作进程</h2><span id="stage-label">等待初始化</span></div>
+          <p id="workflow-goal" class="workflow-goal">等待可执行的工作流…</p>
+          <div class="workflow-heading"><span id="workflow-progress" role="status">尚无动作</span><button id="workflow-current" class="text-button" type="button" aria-controls="workflow-lane" disabled>当前步骤</button></div>
+          <div id="workflow-lane" class="workflow-lane" role="list" aria-label="详细动作工作流" tabindex="0"></div>
+          <div class="react-heading"><h3>ReAct 纠偏记录</h3><button id="react-latest" class="text-button" type="button" aria-controls="react-lane" hidden>回到最新 ↓</button></div>
+          <p class="summary-note">记录异常、重试与方案调整，自动跟随最新进展。</p>
+          <p id="react-empty" class="empty-note">暂无纠偏记录</p>
+          <div id="react-lane" class="react-lane" role="log" aria-label="ReAct 决策摘要" aria-live="polite" aria-relevant="additions text" tabindex="0"></div>
+          <div class="execution-foot"><span id="execution-note">通过相机观测执行，以视觉校验结果。</span><span id="elapsed">—</span></div>
+        </div>
+      </section>
+      <section class="chat-panel">
+        <div class="panel-heading"><h2><span class="agent-symbol">✳</span> 和 Agent 对话</h2><span class="session-tag">持续会话</span></div>
+        <div class="chat-scroll" id="chat-scroll" role="region" aria-label="对话与执行动态" tabindex="0">
+          <div class="welcome" id="welcome">
+            <div class="welcome-icon">✳</div><h3>准备好，开始协作。</h3>
+            <p>告诉我把物体叠放到哪里，或放进哪个盒子。<br>我会反馈理解、计划、动作与观测摘要。</p>
+            <div class="suggestions"><button type="button" data-command="把 A 放到 B 上面" disabled>把 A 放到 B 上面 <span>↗</span></button><button type="button" data-command="把 B 放进盒子" disabled>把 B 放进盒子 <span>↗</span></button></div>
+            <div class="welcome-hint">请使用左侧图例中的物体 ID；可先添加方块或盒子。</div>
+          </div>
+          <div id="messages" role="log" aria-label="对话消息" aria-live="polite" aria-relevant="additions text"></div>
+          <div class="thinking" id="thinking" hidden><span class="loader"></span><span id="thinking-text">Agent 正在理解指令…</span></div>
+        </div>
+        <div class="composer-area">
+          <div class="chat-follow"><button id="chat-latest" class="text-button" type="button" aria-controls="chat-scroll" hidden>回到最新消息 ↓</button></div>
+          <div id="notice" role="status" hidden></div>
+          <form id="command-form">
+            <label class="sr-only" for="instruction">输入自然语言指令</label>
+            <textarea id="instruction" rows="2" maxlength="1000" placeholder="例如：把 A 放到 B 上面，或把 block_1 放进 box" disabled></textarea>
+            <div class="composer-foot"><span>Enter 发送 · Shift + Enter 换行</span><button id="send" type="submit" disabled aria-label="发送指令">发送 <span>↑</span></button></div>
+          </form>
+          <div class="model-line"><span class="live-dot"></span><span id="model-label">加载模型配置</span><span id="reasoning-label" class="reasoning-label" hidden>推理已启用</span></div>
+        </div>
+      </section>
+    </div>
+    <footer><span>语言规划 → 视觉感知 → 物理执行 → 结果验证</span><span>本地仿真 · 云端推理 <span class="footer-mark">P / 01</span></span></footer>
+  </main>
+  <dialog id="dialog"><div class="dialog-icon">!</div><h2 id="dialog-title">操作提示</h2><p id="dialog-text"></p><div class="dialog-actions"><button id="dialog-cancel" class="secondary">取消</button><button id="dialog-ok">知道了</button></div></dialog>
+  <script src="/static/app.js"></script>
+</body>
+</html>

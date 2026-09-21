@@ -1,4 +1,98 @@
-# PickParts：LLM 指令驱动的 ManiSkill3 抓放 Demo
+# PickParts：XLeRobot + ManiSkill 3 具身 Agent
+
+基于 ManiSkill 3 / SAPIEN 的 XLeRobot v0.3 桌面操作系统。底盘和左臂锁定，
+右臂根据自然语言计划执行动态物体定位、抓取、入盒和物块叠放。Agent 只使用
+RGB-D 与机器人本体状态，不读取物体 pose、接触、奖励或仿真成功标志。
+
+## 当前能力
+
+- 默认场景包含红色物块 `A`、蓝色物块 `B` 和绿色盒子 `box`；
+- 可随机添加 `block_N` 和 `box_N`，当前最多 6 个对象；
+- 每次重置保留对象目录，但重新生成不重叠、桌面内、右臂可达的位置；
+- 支持“把 A 放进 box”和“把 A 放到 B 上”等语义任务；
+- Planner 生成扁平原子计划，ReAct 负责 retry/replace/replan/ask_user/abort；
+- 最终结果必须通过新的 RGB-D 观测复核。
+
+详细设计见 [技术文档](docs/技术文档.md)。
+
+## 仓库结构
+
+```text
+src/pickparts_agent/
+  agent/                  # Planner、Executor、Reactor、状态和原子操作
+    atoms/                # 感知/校验、抓取/运动、放置原子
+  scene/                  # ManiSkill 场景、动态对象、RGB-D、IK、机器人资产
+  services/               # 云端 LLM/VLM/ASR 接入
+  interfaces/             # CLI、FastAPI Web 和静态页面
+  baseline/               # 无云端依赖的固定抓放基线
+  app.py                  # python -m pickparts_agent.app 薄入口
+  web.py                  # python -m pickparts_agent.web 薄入口
+  runtime.py              # macOS Vulkan/MoltenVK 配置
+tests/                    # 单元、接口和真实仿真闭环测试
+docs/                     # 技术文档、设计和验收证据
+```
+
+依赖方向：
+
+```text
+interfaces -> agent / services / scene / baseline
+agent      -> scene
+services   -> scene
+baseline   -> scene
+scene      -> runtime
+```
+
+## 安装与运行
+
+```bash
+cd "/Users/bytedance/Documents/具身仿真实践/pickparts-xlerobot-agent"
+bash setup.sh
+```
+
+Web 控制台：
+
+```bash
+./web.sh
+# 打开 http://127.0.0.1:8765
+```
+
+自然语言 CLI：
+
+```bash
+bash run.sh --view
+```
+
+无需云端 Key 的本地基线：
+
+```bash
+bash run.sh --demo A B --view
+bash run.sh --smoke
+```
+
+云端模式读取 `.env` 中的 `LLM_*`、`VLM_*` 和可选 `ASR_*`。Agent 主链路
+使用项目内轻量 Planner/ReAct 编排和 OpenAI 兼容 API；Qwen-Agent 兼容工具
+保留在服务层，但不作为默认编排器。
+
+完整测试：
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+机器人资产来自 [Vector-Wangel/XLeRobot](https://github.com/Vector-Wangel/XLeRobot)，
+固定 revision 与修改记录见 [第三方来源](third_party/README.md)。当前不包含移动
+底盘导航、双臂协同或实机控制。
+
+## 原始仓库历史说明
+
+下方文档及根目录 `agent_main.py`、`sim_skills.py` 等属于原始 Panda PoC，
+包含物体真值驱动路径，**不属于当前非特权 XLeRobot 入口，也不作为验收依据**。
+保留以便追溯上游；请使用上面的 `run.sh` 和 `setup.sh`。
+
+<details>
+<summary>展开原始 Panda PoC 文档（历史内容，勿按此启动当前版本）</summary>
+
+# PickParts：LLM 指令驱动的 ManiSkill3 抓放 Demo（历史）
 
 在 ManiSkill3 仿真中，用一句中文指令指挥桌面 **Panda 单臂**把指定零件抓进盒子：
 
@@ -193,3 +287,5 @@ python test_pickparts.py --part both --seeds 3 7 11 21
 - 仿真框架 [ManiSkill](https://github.com/haosulab/ManiSkill)（Apache-2.0）、[SAPIEN](https://github.com/haosulab/SAPIEN)
 - Agent 框架 [Qwen-Agent](https://github.com/QwenLM/Qwen-Agent)、机器人模型 Franka Panda（ManiSkill 内置资产）
 - 本项目代码供学习与研究使用。
+
+</details>

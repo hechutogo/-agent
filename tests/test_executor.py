@@ -1,11 +1,11 @@
 from helpers import FakeChat, FakeKin, FakeLocate, FakeSim
-from pickparts_agent.atoms import FindObject
-from pickparts_agent.atoms.base import Atom, AtomResult, Check
-from pickparts_agent.atoms.registry import AtomRegistry
-from pickparts_agent.planner import Plan, Planner
-from pickparts_agent.reactor import Reactor
-from pickparts_agent.executor import ReActExecutor
-from pickparts_agent.state import WorldState
+from pickparts_agent.agent.atoms import FindObject
+from pickparts_agent.agent.atoms.base import Atom, AtomResult, Check
+from pickparts_agent.agent.atoms.registry import AtomRegistry
+from pickparts_agent.agent.planner import Plan, Planner
+from pickparts_agent.agent.reactor import Reactor
+from pickparts_agent.agent.executor import ReActExecutor
+from pickparts_agent.agent.state import WorldState
 
 
 class FlakyAtom(Atom):
@@ -44,7 +44,7 @@ def test_happy_path_emits_plan_steps_and_finish():
     executor.on_event = events.append
     plan = Plan(True, [], [{"atom": "flaky", "args": {}}], "")
     result = executor.execute(plan, "goal")
-    types = [e["type"] for e in events]
+    types = [e["type"] for e in events if e["type"] != "activity"]
     assert result["success"] is True
     assert types == ["plan", "step", "step", "finish"]
 
@@ -136,6 +136,18 @@ def test_fatal_aborts_without_retry():
         Plan(True, [], [{"atom": "flaky", "args": {}}], ""), "goal")
     assert result["success"] is False
     assert flaky.calls == 1  # reactor override forces abort immediately
+    assert chat.calls == []
+    assert result["recovery_required"]
+
+
+def test_execution_emits_action_summaries_and_does_not_accept_empty_plan():
+    events = []
+    executor, _ = build(FlakyAtom(0), FakeChat())
+    executor.on_event = events.append
+    result = executor.execute(Plan(True, [], [], ""), "goal")
+    assert not result["success"]
+    executor.execute(Plan(True, [], [{"atom": "flaky", "args": {}}], ""), "goal")
+    assert any(e["type"] == "activity" and e["kind"] == "action" for e in events)
 
 
 def test_llm_budget_exhausted_on_repeated_replan():
@@ -152,3 +164,18 @@ def test_llm_budget_exhausted_on_repeated_replan():
         Plan(True, [], [{"atom": "flaky", "args": {}}], ""), "goal")
     assert result["success"] is False
     assert "LLM" in result["message"] and flaky.calls == 4
+
+
+def test_recovery_cannot_replace_goal_verification_with_localization():
+    verifier = FlakyAtom(99, kind="verify")
+    verifier.name = "verify_state"
+    chat = FakeChat([{
+        "thought": "刷新观测", "decision": "replace",
+        "steps": [{"atom": "find_object", "args": {"target": "A"}}],
+    }])
+    executor, _ = build(verifier, chat)
+    result = executor.execute(Plan(True, [], [{
+        "atom": "verify_state", "args": {"target": "A", "at": "box"},
+    }], ""), "把 A 放进盒子")
+    assert not result["success"]
+    assert verifier.calls == 2  # Original goal is checked again after recovery.

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 def module():
     try:
-        return importlib.import_module("pickparts_agent.web")
+        return importlib.import_module("pickparts_agent.interfaces.web")
     except ImportError:
         pytest.fail("Web service is not implemented")
 
@@ -84,3 +84,31 @@ def test_input_origin_and_initialization_failure():
         assert client.post("/api/command", json={"text": "A"}).status_code == 409
         assert client.post("/api/reset", headers={"Origin": "https://evil.example"}).status_code == 403
         assert client.get("/api/frame").status_code == 204
+
+
+def test_object_add_runs_on_worker_and_scene_inventory_is_published():
+    web = module()
+    class SceneBackend(Backend):
+        scene_objects = [{"id": "A", "kind": "block"}]
+
+        def add_object(self, kind):
+            assert threading.get_ident() == self.owner
+            self.scene_objects = self.scene_objects + [{"id": "C", "kind": kind}]
+
+    with TestClient(web.create_app(factory=SceneBackend)) as client:
+        wait_for(client, lambda s: s["status"] == "ready")
+        assert client.post("/api/objects", json={"kind": "sphere"}).status_code == 422
+        assert client.post("/api/objects", json={"kind": "block"}).status_code == 202
+        state = wait_for(client, lambda s: s["status"] == "ready" and len(s.get("scene_objects", [])) == 2)
+        assert state["scene_objects"][-1]["id"] == "C"
+
+
+def test_activity_events_are_reconnectable_and_react_is_bounded():
+    console = module().Console(Backend)
+    console.view({"type": "activity", "kind": "plan", "text": "先定位，再抓取"})
+    assert console.snapshot()["messages"][-1]["role"] == "activity"
+    for i in range(120):
+        console.view({"type": "react", "attempt": i, "thought": "重新观测",
+                      "decision": "retry", "detail": "定位丢失"})
+    assert len(console.snapshot()["react"]) <= 100
+    assert console.snapshot()["react"][-1]["attempt"] == 119

@@ -1,7 +1,7 @@
 import pytest
 
-from pickparts_agent.atoms.base import Atom
-from pickparts_agent.atoms.registry import AtomRegistry
+from pickparts_agent.agent.atoms.base import Atom
+from pickparts_agent.agent.atoms.registry import AtomRegistry
 
 
 class GreetAtom(Atom):

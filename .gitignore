@@ -22,8 +22,18 @@ maniskill_data/
 .trae/
 .vscode/
 .idea/
+.DS_Store
 
 # ===== 仿真运行产物 =====
 *.log
 *.mp4
 rendered_*.png
+.venv/
+.cache/
+.runtime/
+.xlerobot-upstream/
+runs/
+build/
+dist/
+*.convex.stl
+.superpowers/

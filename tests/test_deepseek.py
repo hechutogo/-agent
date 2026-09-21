@@ -1,5 +1,5 @@
 """Catch native tool result IDs rejected by DeepSeek's OpenAI API."""
-from pickparts_agent.cloud import Endpoint
+from pickparts_agent.services.cloud import Endpoint
 
 
 def test_native_tool_result_serialization():

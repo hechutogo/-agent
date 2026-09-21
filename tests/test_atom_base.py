@@ -1,4 +1,4 @@
-from pickparts_agent.atoms.base import Atom, AtomContext, AtomResult, Check
+from pickparts_agent.agent.atoms.base import Atom, AtomContext, AtomResult, Check
 
 
 class DemoAtom(Atom):

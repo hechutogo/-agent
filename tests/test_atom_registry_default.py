@@ -1,10 +1,10 @@
-from pickparts_agent.atoms import build_default_registry
+from pickparts_agent.agent.atoms import build_default_registry
 
 EXPECTED = {"find_object", "reach_above", "grasp", "lift", "carry_to",
-            "release_into", "verify_state", "reset_arm", "set_gripper"}
+            "release_into", "verify_state", "reset_arm", "set_gripper", "place_on"}
 
 
-def test_default_registry_registers_all_nine_atoms():
+def test_default_registry_registers_all_motion_and_relation_atoms():
     registry = build_default_registry()
     assert set(registry.atoms) == EXPECTED
 
