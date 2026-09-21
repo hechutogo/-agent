@@ -28,6 +28,7 @@ src/pickparts_agent/
   app.py                  # python -m pickparts_agent.app 薄入口
   web.py                  # python -m pickparts_agent.web 薄入口
   runtime.py              # macOS Vulkan/MoltenVK 配置
+src/tiptop_mac/           # TiPToP 风格对照包：一次性感知→全局 TAMP→开环执行
 tests/                    # 单元、接口和真实仿真闭环测试
 docs/                     # 技术文档、设计和验收证据
 ```
@@ -39,8 +40,29 @@ interfaces -> agent / services / scene / baseline
 agent      -> scene
 services   -> scene
 baseline   -> scene
+tiptop_mac -> pickparts_agent.scene / agent 低层运动（不改其行为）
 scene      -> runtime
 ```
+
+## TiPToP Mac/CPU 对照系统
+
+[tiptop_mac](src/tiptop_mac/) 是与现有 ReAct Agent 对照的独立实现，复刻 TiPToP
+流水线但去除 CUDA 依赖：一次性 RGB-D（HSV 分割 + RANSAC 桌面 + 顶部抓取启发式）
+→ 语言接地为目标谓词 → CPU TAMP-lite（符号 BFS + IK/几何预检）→ 整条轨迹开环执行，
+失败即中止，不做执行中复核或重规划。低层仿真、RGB-D、SciPy IK 与运动安全与主系统共用。
+
+- 抓取闭合会把物体物理拖动约 1cm；因此规划在 lift 后插入一次**无条件、不可分支的
+  抓取标定**（量物体相对 TCP 的偏移并平移后续预定点，对应 cuTAMP 的 grasp-relative
+  规划），它不依据任务结果做任何决策，与 ReAct 的条件式重试有本质区别。
+- 端到端验收固定同场景同种子：seed 0 `A→B`、seed 3 `B→A`、seed 7 `A→box`。
+
+```bash
+.venv/bin/python -m tiptop_mac.cli run --seed 0 "把 A 叠到 B 上"
+.venv/bin/python -m tiptop_mac.cli benchmark
+# 报告输出 runs/benchmark/<timestamp>/{results.json,report.md}
+```
+
+缺少云端配置时 benchmark 对相应系统显式标记 skipped，不会崩溃。
 
 ## 安装与运行
 
