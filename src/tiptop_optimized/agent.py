@@ -175,6 +175,10 @@ class OptimizedTiPToPAgent(TiPToPAgent):
                     verified = (self.planner.satisfies(scene, task.goal.predicates,
                                                       held=held)
                                 and (not task.require_action or acted))
+                    if not verified and execution["success"]:
+                        failed_xy = self.planner.table_release_xy(plan)
+                        if failed_xy is not None:
+                            excluded_table_xy.append(failed_xy)
                     if not execution["success"]:
                         failure = execution
                     self._save_state({

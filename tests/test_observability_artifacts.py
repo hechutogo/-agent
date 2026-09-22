@@ -34,9 +34,13 @@ def test_write_llm_pair(tmp_path):
 def test_linked_text_artifacts_do_not_expose_secrets(tmp_path):
     store = ArtifactStore(tmp_path)
     secret = "sk-abcdefgh123456"
-    paths = store.write_llm("r1", "llm", secret, "Bearer abcdefgh123456", secret)
-    paths.append(store.write_state("r1", "scene", {"goal": secret, "count": 2}))
+    opaque = "0123456789abcdef0123456789abcdef"
+    paths = store.write_llm(
+        "r1", "llm", secret, f'{{"api_key":"{opaque}"}}', secret)
+    paths.append(store.write_state(
+        "r1", "scene", {"goal": secret, "access_token": opaque, "count": 2}))
     for path in paths:
         content = (tmp_path / path).read_text()
         assert secret not in content and "abcdefgh123456" not in content
+        assert opaque not in content
     assert json.loads((tmp_path / paths[-1]).read_text())["count"] == 2

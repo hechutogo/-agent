@@ -184,6 +184,27 @@ def test_unreachable_table_target_is_excluded_from_current_subtask_replan():
     assert sum((a - b) ** 2 for a, b in zip(first_release, second_release)) >= .05 ** 2
 
 
+def test_visually_failed_table_target_is_excluded_from_replan():
+    agent, events, _ = build(
+        ["table"], ["false_success", "ok"], initial="box")
+    calls = []
+    original = agent.planner.plan
+
+    def recording_plan(*args, **kwargs):
+        calls.append(tuple(tuple(x) for x in kwargs.get("excluded_table_xy", ())))
+        return original(*args, **kwargs)
+
+    agent.planner.plan = recording_plan
+    result = agent.run("把 A 放到桌面")
+
+    assert result["success"] and result["attempts"] == 2
+    assert calls[0] == () and len(calls[1]) == 1
+    plans = [event for event in events if event["type"] == "plan"]
+    first_release = plans[0]["steps"][6]["args"]["position"][:2]
+    second_release = plans[1]["steps"][6]["args"]["position"][:2]
+    assert sum((a - b) ** 2 for a, b in zip(first_release, second_release)) >= .05 ** 2
+
+
 def test_failed_target_survives_ambiguous_post_failure_observation():
     from tiptop_optimized.grounding import RecoveryDecision
     agent, _, _ = build(["table"], ["unreachable", "ok"], initial="box")

@@ -416,15 +416,30 @@ class TAMPLite(_BaseTAMPLite):
         raise _Infeasible
 
     @staticmethod
-    def failed_table_xy(plan, failed_index):
-        if failed_index is None or not any(
+    def table_release_xy(plan):
+        if not any(
                 kind == "place" and args[1] == "table"
                 for kind, args in plan.operators):
             return None
         opening = next((
             index for index, step in enumerate(plan.trajectory)
             if step.kind == "gripper" and step.jaw == .8), None)
-        if opening is None or failed_index >= opening:
+        if opening is None:
+            return None
+        release = plan.trajectory[opening - 1]
+        if release.kind != "move" or release.position is None:
+            return None
+        return np.asarray(release.position[:2], dtype=float).copy()
+
+    @staticmethod
+    def failed_table_xy(plan, failed_index):
+        release_xy = TAMPLite.table_release_xy(plan)
+        if release_xy is None or failed_index is None:
+            return None
+        opening = next(
+            index for index, step in enumerate(plan.trajectory)
+            if step.kind == "gripper" and step.jaw == .8)
+        if failed_index >= opening:
             return None
         calibrations = [
             index for index, step in enumerate(plan.trajectory[:opening])
@@ -432,7 +447,4 @@ class TAMPLite(_BaseTAMPLite):
         placement_start = calibrations[-1] + 1 if calibrations else 0
         if failed_index < placement_start:
             return None
-        release = plan.trajectory[opening - 1]
-        if release.kind != "move" or release.position is None:
-            return None
-        return np.asarray(release.position[:2], dtype=float).copy()
+        return release_xy

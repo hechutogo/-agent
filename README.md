@@ -137,6 +137,7 @@ bash run.sh --smoke
 
 ## 文档
 
+- [具身 Agent 设计文档](docs/具身Agent设计文档.md)：完整架构、三引擎边界和演进路线。
 - [技术文档](docs/技术文档.md)：系统架构、原子操作、Agent、Web 与 Trace。
 - [TiPToP 初版源码对照](docs/tiptop-mac-源码对照.md)：官方实现映射与 Mac/CPU 替换边界。
 - [TiPToP 优化版](docs/tiptop-optimized.md)：子任务、恢复机制和验收记录。

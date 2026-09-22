@@ -63,6 +63,6 @@ node --test tests/frontend/*.test.cjs
 - 真实物理仿真 seeds 7、17、27：“把 A 放到 B 上面，再把 A 放到盒子里”，均取得 `B → box` 两个视觉检查点，结束时无残留持物候选。
 - seed 17 同时覆盖叠放后自适应降低抓取悬停高度。
 - 原有盒内往返、注入 IK 故障恢复继续通过；专项物理验收共 5 项。
-- 本轮全量 Python：650 passed；前端 Node：27 passed。
+- 本轮全量 Python：654 passed；前端 Node：27 passed。
 - 根因与复用排查步骤见
   [堆叠后持物状态恢复](debugging/stack-grip-recovery.md)。

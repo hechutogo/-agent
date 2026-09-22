@@ -43,6 +43,20 @@ class ReActExecutor:
             self.recorder.log("warning", "failure artifact capture failed",
                               logger="executor")
 
+    def _call_atom(self, ctx, name, args, *, span_name=None):
+        span = self.recorder.start_span(
+            span_name or f"atom:{name}", **self._semantic_args(args))
+        try:
+            result = self.registry.get(name).call(ctx, args)
+        except Exception as exc:
+            self.recorder.end_span(
+                span, "error", type(exc).__name__, str(exc))
+            raise
+        self.recorder.end_span(
+            span, "ok" if result.success else "error",
+            result.error_kind, result.message)
+        return result
+
     def _emit(self, event):
         self.on_event(event)
 
@@ -83,17 +97,13 @@ class ReActExecutor:
                         "text": f"第 {pointer + 1} 步：{_STAGE.get(call['atom'], call['atom'])}"
                                 + " · " + "，".join(f"{k}={v}" for k, v in call.get("args", {}).items())})
             self._emit({"type": "step", "index": pointer, "status": "active"})
-            atom_span = self.recorder.start_span(
-                f"atom:{call['atom']}", **self._semantic_args(call.get("args", {})))
-            result = self.registry.get(call["atom"]).call(ctx, call.get("args", {}))
+            result = self._call_atom(
+                ctx, call["atom"], call.get("args", {}))
             if result.success:
-                self.recorder.end_span(atom_span, "ok")
                 statuses[pointer] = "done"
                 self._emit({"type": "step", "index": pointer, "status": "done"})
                 pointer += 1
                 continue
-            self.recorder.end_span(atom_span, "error",
-                                   result.error_kind, result.message)
             self._capture_failure()
             statuses[pointer] = "failed"
             self._emit({"type": "step", "index": pointer, "status": "failed"})
@@ -132,17 +142,13 @@ class ReActExecutor:
             self.on_stage("视觉校验")
             self._emit({"type": "activity", "kind": "observation",
                         "text": f"最终确认：{args['target']} → {args['at']}，重新读取视觉观测。"})
-            verify_span = self.recorder.start_span(
-                "final_verify", target=args["target"], at=args["at"])
-            result = self.registry.get("verify_state").call(ctx, args)
+            result = self._call_atom(
+                ctx, "verify_state", args, span_name="final_verify")
             if not result.success:
-                self.recorder.end_span(verify_span, "error",
-                                       result.error_kind, result.message)
                 payload = self._fail("最终目标未获视觉确认：" + result.message)
                 if result.error_kind == "fatal":
                     payload["recovery_required"] = True
                 return payload
-            self.recorder.end_span(verify_span, "ok")
         self._emit({"type": "finish", "success": True})
         return {"success": True, "message": f"已完成：{goal}"}
 
