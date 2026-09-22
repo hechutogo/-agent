@@ -13,6 +13,8 @@ def _parser():
     run = sub.add_parser("run", help="Run one instruction once (open loop)")
     run.add_argument("instruction")
     run.add_argument("--seed", type=int, default=0)
+    run.add_argument("--view", action="store_true",
+                     help="打开可交互的 3D 仿真窗口，执行结束后保留以便检查")
 
     bench = sub.add_parser("benchmark",
                            help="Compare tiptop_mac against the ReAct agent")
@@ -43,9 +45,15 @@ def main(argv=None):
     try:
         from pickparts_agent.scene.simulation import Simulation
         sim = Simulation(seed=args.seed)
+        if args.view:
+            sim.enable_viewer()
         from .agent import build_tiptop_agent
         result = build_tiptop_agent(sim, llm).run(args.instruction)
         print(result["message"])
+        if args.view:
+            print("3D 窗口保留中：可旋转检查场景，关闭窗口即退出。")
+            while sim.viewer_open:
+                sim.hold(1)
         return 0 if result["success"] else 1
     finally:
         if sim is not None:

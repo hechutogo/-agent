@@ -15,14 +15,21 @@ class FindObject(Atom):
     }
 
     def check_pre(self, ctx, args):
+        if args["target"] == "table":
+            return Check(False, "table 是支撑面，不能作为普通物体定位")
         return Check(True)
 
     def run(self, ctx, args):
         target = args["target"]
         frame_id = ctx.state.tick()
         frame = ctx.sim.observe()
+        recorder = ctx.recorder
+        if recorder is None:
+            from ...observability import NullRecorder
+            recorder = NullRecorder()
         try:
-            loc = ctx.locate(frame, target)
+            with recorder.span("vision:locate", target=target):
+                loc = ctx.locate(frame, target)
         except Exception as exc:
             ctx.state.mark_missing(target)
             return AtomResult(False, "lost_object",
@@ -53,6 +60,14 @@ class VerifyState(Atom):
     }
 
     def check_pre(self, ctx, args):
+        target, at, relation = (
+            args.get("target"), args.get("at"), args.get("relation"))
+        if target == "table":
+            return Check(False, "table 不能作为待校验的可动物体")
+        if relation == "table" and at != "table":
+            return Check(False, "桌面关系必须使用 table 作为目的")
+        if at == "table" and relation not in (None, "table"):
+            return Check(False, "table 目的只能校验桌面关系")
         return Check(True)
 
     def run(self, ctx, args):
@@ -83,7 +98,8 @@ class VerifyState(Atom):
                                   f"校验视野不完整（{type(exc).__name__}），不能断言物体仍在桌面")
         if dest is None:
             try:
-                measured_height = table_height(frame, rec.point, rec.bbox)
+                measured_height = table_height(
+                    frame, rec.point, rec.bbox, footprint=rec.extent[:2])
             except (ValueError, AttributeError):
                 return AtomResult(False, "lost_object", "桌面支撑面不可见，不能确认桌面接触")
             matched = abs(rec.bottom_z - measured_height) < .004

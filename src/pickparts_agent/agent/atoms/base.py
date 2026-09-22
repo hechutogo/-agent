@@ -18,6 +18,7 @@ class AtomContext:
     state: object
     on_stage: Callable[[str], None]
     on_trace: Callable[[dict], None]
+    recorder: object = None
 
 
 @dataclass

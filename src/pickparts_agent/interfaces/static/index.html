@@ -9,7 +9,7 @@
 <body>
   <header>
     <a class="brand" href="/" aria-label="PickParts 首页"><span class="brand-icon">⌘</span> PickParts <span class="brand-tag">LAB</span></a>
-    <div class="header-right"><span class="live-dot" id="connection-dot"></span><span id="connection">正在连接</span><span class="separator"></span><span>XLeRobot v0.3</span></div>
+    <div class="header-right"><span class="live-dot" id="connection-dot"></span><span id="connection">正在连接</span><span class="separator"></span><a href="/history">历史记录</a><span class="separator"></span><span>XLeRobot v0.3</span></div>
   </header>
   <main>
     <div class="intro">
@@ -35,12 +35,17 @@
           <span class="legend-note">640 × 480 · RGB-D</span>
         </div>
         <div class="execution">
-          <div class="execution-title"><h2>动作进程</h2><span id="stage-label">等待初始化</span></div>
+          <section id="subtask-panel" class="subtask-panel" aria-labelledby="subtask-title" hidden>
+            <h3 id="subtask-title">任务拆解 · 有序子任务</h3>
+            <p id="subtask-progress" role="status">尚无子任务</p>
+            <ol id="subtask-lane" class="subtask-lane" aria-label="有序子任务及完成状态" tabindex="0"></ol>
+          </section>
+          <div class="execution-title"><h2 id="motion-title">动作进程</h2><span id="stage-label">等待初始化</span></div>
           <p id="workflow-goal" class="workflow-goal">等待可执行的工作流…</p>
           <div class="workflow-heading"><span id="workflow-progress" role="status">尚无动作</span><button id="workflow-current" class="text-button" type="button" aria-controls="workflow-lane" disabled>当前步骤</button></div>
           <div id="workflow-lane" class="workflow-lane" role="list" aria-label="详细动作工作流" tabindex="0"></div>
-          <div class="react-heading"><h3>ReAct 纠偏记录</h3><button id="react-latest" class="text-button" type="button" aria-controls="react-lane" hidden>回到最新 ↓</button></div>
-          <p class="summary-note">记录异常、重试与方案调整，自动跟随最新进展。</p>
+          <div class="react-heading"><h3 id="react-title">ReAct 纠偏记录</h3><button id="react-latest" class="text-button" type="button" aria-controls="react-lane" hidden>回到最新 ↓</button></div>
+          <p class="summary-note" id="react-description">记录异常、重试与方案调整，自动跟随最新进展。</p>
           <p id="react-empty" class="empty-note">暂无纠偏记录</p>
           <div id="react-lane" class="react-lane" role="log" aria-label="ReAct 决策摘要" aria-live="polite" aria-relevant="additions text" tabindex="0"></div>
           <div class="execution-foot"><span id="execution-note">通过相机观测执行，以视觉校验结果。</span><span id="elapsed">—</span></div>
@@ -48,10 +53,22 @@
       </section>
       <section class="chat-panel">
         <div class="panel-heading"><h2><span class="agent-symbol">✳</span> 和 Agent 对话</h2><span class="session-tag">持续会话</span></div>
+        <div class="agent-picker">
+          <label for="agent-select">执行引擎 <span id="agent-mode" class="mode-tag">闭环 · ReAct</span></label>
+          <select id="agent-select" disabled aria-describedby="agent-description agent-switch-note">
+          </select>
+          <p id="agent-description">语言规划、视觉感知与 ReAct 纠偏，以视觉观测校验结果。</p>
+          <p id="agent-switch-note">切换保留当前场景，清空对话与动作进程；历史记录保留。</p>
+        </div>
+        <a id="current-run" class="current-run" href="/history" hidden>
+          <span class="current-run-icon" aria-hidden="true">↗</span>
+          <span><span class="eyebrow">LATEST RUN</span><strong id="current-run-title">当前运行</strong><code id="current-run-id"></code></span>
+          <span class="current-run-action">查看追踪</span>
+        </a>
         <div class="chat-scroll" id="chat-scroll" role="region" aria-label="对话与执行动态" tabindex="0">
           <div class="welcome" id="welcome">
             <div class="welcome-icon">✳</div><h3>准备好，开始协作。</h3>
-            <p>告诉我把物体叠放到哪里，或放进哪个盒子。<br>我会反馈理解、计划、动作与观测摘要。</p>
+            <p id="welcome-description">告诉我把物体叠放到哪里，或放进哪个盒子。<br>我会反馈理解、计划、动作与观测摘要。</p>
             <div class="suggestions"><button type="button" data-command="把 A 放到 B 上面" disabled>把 A 放到 B 上面 <span>↗</span></button><button type="button" data-command="把 B 放进盒子" disabled>把 B 放进盒子 <span>↗</span></button></div>
             <div class="welcome-hint">请使用左侧图例中的物体 ID；可先添加方块或盒子。</div>
           </div>
@@ -70,9 +87,10 @@
         </div>
       </section>
     </div>
-    <footer><span>语言规划 → 视觉感知 → 物理执行 → 结果验证</span><span>本地仿真 · 云端推理 <span class="footer-mark">P / 01</span></span></footer>
+    <footer><span id="pipeline-label">语言规划 → 视觉感知 → 物理执行 → 结果验证</span><span>本地仿真 · 云端推理 <span class="footer-mark">P / 01</span></span></footer>
   </main>
   <dialog id="dialog"><div class="dialog-icon">!</div><h2 id="dialog-title">操作提示</h2><p id="dialog-text"></p><div class="dialog-actions"><button id="dialog-cancel" class="secondary">取消</button><button id="dialog-ok">知道了</button></div></dialog>
+  <script src="/static/ui.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

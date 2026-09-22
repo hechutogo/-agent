@@ -30,16 +30,26 @@ def _arm_qpos(ctx):
     return np.asarray(frame.qpos)[idx]
 
 
-def _cartesian(ctx, position, jaw=None):
+def _cartesian_waypoints(kin, position, seed):
     position = np.asarray(position, dtype=float)
-    seed = _arm_qpos(ctx)
-    pose = ctx.kin.forward(seed)
+    pose = kin.forward(seed)
     dist = float(np.linalg.norm(position - pose[:3, 3]))
     if pose[2, 1] > 0.97 and dist > 0.008:
         count = max(2, int(np.ceil(dist / 0.008)))
-        wps = np.linspace(pose[:3, 3], position, count + 1)[1:]
-    else:
-        wps = [position]
+        return np.linspace(pose[:3, 3], position, count + 1)[1:]
+    return [position]
+
+
+def _solve_path(kin, position, seed):
+    for waypoint in _cartesian_waypoints(kin, position, seed):
+        seed = kin.solve(waypoint, seed=seed)
+    return seed
+
+
+def _cartesian(ctx, position, jaw=None):
+    position = np.asarray(position, dtype=float)
+    seed = _arm_qpos(ctx)
+    wps = _cartesian_waypoints(ctx.kin, position, seed)
     for wp in wps:
         wp = np.asarray(wp, dtype=float)
         q = ctx.kin.solve(wp, seed=seed)
@@ -71,6 +81,8 @@ class SetGripper(Atom):
     }
 
     def check_pre(self, ctx, args):
+        if args["open"] and ctx.state.held_object is not None:
+            return Check(False, "持物时必须通过放置原子安全释放")
         return Check(True)
 
     @_guard

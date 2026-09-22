@@ -6,6 +6,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from pickparts_agent.observability import NullRecorder
+
 
 def module():
     try:
@@ -26,7 +28,7 @@ def wait_for(client, predicate):
 
 class Backend:
     """Only replaces external physics/cloud, retains real service scheduling."""
-    def __init__(self, publish, stage, view=None):
+    def __init__(self, publish, stage, view=None, recorder=None):
         self.stage = stage
         self.release = threading.Event()
         self.owner = threading.get_ident()
@@ -46,11 +48,11 @@ class Backend:
 def test_commands_serialize_history_survives_reconnect_and_reset():
     web = module()
     backends = []
-    def factory(publish, stage, view=None):
+    def factory(publish, stage, view=None, recorder=None):
         backend = Backend(publish, stage, view)
         backends.append(backend)
         return backend
-    app = web.create_app(factory=factory)
+    app = web.create_app(factory=factory, recorder=NullRecorder())
     with TestClient(app) as client:
         wait_for(client, lambda s: s["status"] == "ready")
         initial = client.get("/api/state").json()
@@ -75,9 +77,9 @@ def test_commands_serialize_history_survives_reconnect_and_reset():
 
 def test_input_origin_and_initialization_failure():
     web = module()
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise RuntimeError("private-token")
-    with TestClient(web.create_app(factory=fail)) as client:
+    with TestClient(web.create_app(factory=fail, recorder=NullRecorder())) as client:
         state = wait_for(client, lambda s: s["status"] == "error")
         assert "private-token" not in str(state)
         assert client.post("/api/command", json={"text": "   "}).status_code == 422
@@ -95,7 +97,7 @@ def test_object_add_runs_on_worker_and_scene_inventory_is_published():
             assert threading.get_ident() == self.owner
             self.scene_objects = self.scene_objects + [{"id": "C", "kind": kind}]
 
-    with TestClient(web.create_app(factory=SceneBackend)) as client:
+    with TestClient(web.create_app(factory=SceneBackend, recorder=NullRecorder())) as client:
         wait_for(client, lambda s: s["status"] == "ready")
         assert client.post("/api/objects", json={"kind": "sphere"}).status_code == 422
         assert client.post("/api/objects", json={"kind": "block"}).status_code == 202
@@ -104,7 +106,7 @@ def test_object_add_runs_on_worker_and_scene_inventory_is_published():
 
 
 def test_activity_events_are_reconnectable_and_react_is_bounded():
-    console = module().Console(Backend)
+    console = module().Console(Backend, NullRecorder())
     console.view({"type": "activity", "kind": "plan", "text": "先定位，再抓取"})
     assert console.snapshot()["messages"][-1]["role"] == "activity"
     for i in range(120):

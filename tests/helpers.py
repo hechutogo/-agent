@@ -99,8 +99,8 @@ class FakeChat:
     def add(self, payload):
         self.responses.append(payload)
 
-    def json(self, system, user):
-        self.calls.append({"system": system, "user": user})
+    def json(self, system, user, *, label=None):
+        self.calls.append({"system": system, "user": user, "label": label})
         if not self.responses:
             raise RuntimeError("FakeChat exhausted")
         item = self.responses.pop(0)

@@ -1,7 +1,10 @@
 import numpy as np
 
 from helpers import FakeKin, FakeLocate, FakeSim, make_context
-from pickparts_agent.agent.atoms import FindObject, SetGripper, VerifyState
+from pickparts_agent.agent.atoms import (
+    FindObject, PlaceOn, PlaceOnTable, SetGripper, VerifyState)
+from pickparts_agent.agent.state import WorldState
+from pickparts_agent.scene.perception import Frame
 
 
 def test_find_object_locates_and_updates_state():
@@ -18,6 +21,14 @@ def test_find_object_missing_returns_lost_object():
     assert r.success is False and r.error_kind == "lost_object"
 
 
+def test_find_object_rejects_virtual_table_without_calling_locator():
+    locate = FakeLocate({})
+    ctx = make_context(FakeSim(), FakeKin(), locate)
+    result = FindObject().call(ctx, {"target": "table"})
+    assert not result.success and result.error_kind == "precondition"
+    assert locate.calls == []
+
+
 def test_verify_state_success_when_placement_matches():
     locate = FakeLocate({"A": [0.085, -0.30, 0.760], "box": [0.085, -0.30, 0.726]})
     ctx = make_context(FakeSim(), FakeKin(), locate)
@@ -30,6 +41,15 @@ def test_verify_state_failure_when_placement_differs():
     ctx = make_context(FakeSim(), FakeKin(), locate)
     r = VerifyState().call(ctx, {"target": "A", "at": "box"})
     assert r.success is False and r.error_kind == "verify"
+
+
+def test_verify_state_rejects_table_as_movable_target_before_vision():
+    locate = FakeLocate({})
+    ctx = make_context(FakeSim(), FakeKin(), locate)
+    result = VerifyState().call(
+        ctx, {"target": "table", "at": "table", "relation": "table"})
+    assert not result.success and result.error_kind == "precondition"
+    assert locate.calls == []
 
 
 def test_verify_state_does_not_claim_success_from_stale_occluded_placement():
@@ -65,6 +85,31 @@ def test_set_gripper_close_updates_state_and_jaw():
     assert sim.moves[-1]["jaw"] == 0.0
 
 
+def test_set_gripper_cannot_release_held_object_without_placement_atom():
+    ctx = make_context()
+    ctx.state.set_gripper(False)
+    ctx.state.set_held("A")
+    result = SetGripper().call(ctx, {"open": True})
+    assert not result.success and result.error_kind == "precondition"
+    assert ctx.state.held_object == "A" and not ctx.state.gripper_open
+    assert ctx.sim.moves == []
+
+
+def test_place_on_rejects_virtual_table_even_if_state_is_poisoned():
+    state = WorldState()
+    state.apply_observation("table", {
+        "bbox": [1, 1, 3, 3], "point": [0., -.4, .72],
+        "confidence": 1., "top_z": .72, "bottom_z": .72,
+        "extent": [.4, .4, 0.],
+    }, state.tick())
+    state.set_gripper(False)
+    state.set_held("A")
+    ctx = make_context(state=state)
+    result = PlaceOn().call(ctx, {"target": "table"})
+    assert not result.success and result.error_kind == "precondition"
+    assert ctx.state.held_object == "A" and ctx.sim.moves == []
+
+
 from pickparts_agent.agent.atoms import (
     CarryTo, Grasp, Lift, ReachAbove, ReleaseInto, ResetArm, REST_Q)
 
@@ -74,6 +119,80 @@ def prepared(ctx):
     FindObject().call(ctx, {"target": "box"})
     ReachAbove().call(ctx, {"target": "A"})
     Grasp().call(ctx, {"target": "A"})
+
+
+def table_frame(sim, *, visible=True):
+    height, width = 120, 160
+    depth = np.ones((height, width), dtype=float)
+    depth[52:68, 72:88] = .96
+    if not visible:
+        depth[:] = np.nan
+    transform = np.diag([1., 1., -1., 1.])
+    transform[:3, 3] = [0., -.45, 1.72]
+    intrinsic = np.array([[300., 0, width / 2],
+                          [0, 300., height / 2],
+                          [0, 0, 1.]])
+    return Frame(np.zeros((height, width, 3), np.uint8), depth, intrinsic,
+                 transform, sim.qpos.copy(), np.zeros_like(sim.qpos))
+
+
+def held_over_table(*, visible=True, kin=None):
+    sim, kin, locate = FakeSim(), kin or FakeKin(), FakeLocate({})
+    sim.observe = lambda: table_frame(sim, visible=visible)
+    state = WorldState()
+    state.apply_observation("A", {
+        "bbox": [72, 52, 88, 68], "point": [0., -.45, .84],
+        "confidence": 1., "top_z": .856, "bottom_z": .82,
+        "extent": [.024, .024, .036],
+    }, state.tick())
+    state.set_gripper(False)
+    state.set_held("A")
+    state.grasp_offset = [0., 0., .02]
+    state.grasp_bottom_offset = .02
+    return make_context(sim, kin, locate, state), locate
+
+
+class FirstPathBlockedKin:
+    def solve(self, position, seed=None):
+        position = np.asarray(position, dtype=float)
+        if .02 < position[0] < .04 and -.44 < position[1] < -.38:
+            raise ValueError("intermediate waypoint is unreachable")
+        return np.r_[position, 0., 1.57]
+
+    def forward(self, q):
+        pose = np.eye(4)
+        pose[:3, 3] = np.asarray(q)[:3]
+        pose[2, 1] = .99
+        return pose
+
+
+def test_place_on_table_measures_safe_cell_without_localizing_table():
+    ctx, locate = held_over_table()
+    result = PlaceOnTable().call(ctx, {})
+    assert result.success
+    assert ctx.state.held_object is None and ctx.state.gripper_open
+    assert result.observed["table_height"] == .72
+    x, y = result.observed["placement_xy"]
+    assert (x - .012 >= .0192 + .018 or x + .012 <= -.0256 - .018
+            or y - .012 >= -.4308 + .018 or y + .012 <= -.4756 - .018)
+    assert locate.calls == []
+
+
+def test_place_on_table_skips_candidate_with_unreachable_intermediate_path():
+    kin = FirstPathBlockedKin()
+    ctx, _ = held_over_table(kin=kin)
+    ctx.sim.qpos[:3] = [0., -.34, .84]
+    result = PlaceOnTable().call(ctx, {})
+    assert result.success
+    assert np.allclose(result.observed["placement_xy"], [0., -.40])
+
+
+def test_place_on_table_keeps_hold_when_support_is_not_visible():
+    ctx, _ = held_over_table(visible=False)
+    result = PlaceOnTable().call(ctx, {})
+    assert not result.success and result.error_kind == "lost_object"
+    assert ctx.state.held_object == "A" and not ctx.state.gripper_open
+    assert ctx.sim.moves == []
 
 
 def test_full_motion_chain_grounds_and_holds_then_releases():

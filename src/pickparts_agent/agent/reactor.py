@@ -12,6 +12,9 @@ replan（重规划剩余任务，steps 必须为空）、ask_user（向用户提
 abort（停止并上报，steps 为空）。不能用空 replace 跳过失败并制造成功。
 steps 只能使用实时目录中的原子，需要刷新定位时用 find_object，不要臆造原子。
 fatal 安全错误必须立即 abort，不能恢复。严禁输出或推断坐标。
+table 是运行时测量的虚拟支撑面，不能 find_object/carry_to/place_on(table)；
+放到桌面使用 place_on_table，再用 verify_state relation=table 校验。
+world.held_object 非空时禁止 set_gripper {{open:true}}，必须使用放置原子安全释放。
 
 诊断时比较 world.frame_id 和各 objects 观测的 frame_id，旧观测不等于当前事实。
 world.catalog 仅为 ID -> {{id,kind,label,color}} 语义元数据，不是物体位置真值。
@@ -63,16 +66,17 @@ class Reactor:
     def decide(self, goal, steps, pointer, state, failed, attempt):
         if failed.error_kind == "fatal":
             return Decision("abort", reason="检测到安全错误，已中止执行", steps=[])
+        world = state.snapshot()
         user = json.dumps({
             "goal": goal, "attempt": attempt,
             "failed_atom": steps[pointer] if steps and pointer < len(steps) else None,
             "error_kind": failed.error_kind, "message": failed.message,
             "observed": failed.observed, "remaining": steps[pointer:],
-            "world": state.snapshot(),
+            "world": world,
         }, ensure_ascii=False)
         try:
             system = SYSTEM_PROMPT.format(catalog=self.registry.catalog_for_prompt())
-            data = self.chat.json(system, user)
+            data = self.chat.json(system, user, label="react")
             if not isinstance(data, dict):
                 raise ValueError("Decision must be an object")
             kind = data.get("decision")
@@ -92,6 +96,11 @@ class Reactor:
                 raise ValueError("Decision summaries must be strings")
             for call in new_steps:
                 self.registry.validate_call(call)
+            if world.get("held_object") is not None and any(
+                    call["atom"] == "set_gripper"
+                    and call.get("args", {}).get("open") is True
+                    for call in new_steps):
+                raise ValueError("Held objects require a placement atom")
         except (LLMError, TypeError, ValueError):
             return self._fallback(failed.error_kind)
         # Keep the existing executor/UI field, but expose only the public summary.

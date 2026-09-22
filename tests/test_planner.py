@@ -105,6 +105,54 @@ def stack_steps(source="part-7", destination="support-9"):
     ]
 
 
+def table_steps(source="part-7"):
+    return [
+        {"atom": "find_object", "args": {"target": source}},
+        {"atom": "reach_above", "args": {"target": source}},
+        {"atom": "grasp", "args": {"target": source}},
+        {"atom": "lift", "args": {"clearance": 0.1}},
+        {"atom": "place_on_table", "args": {}},
+        {"atom": "verify_state", "args": {
+            "target": source, "at": "table", "relation": "table"}},
+        {"atom": "reset_arm", "args": {}},
+    ]
+
+
+def test_table_placement_uses_runtime_grounded_table_atom():
+    steps = table_steps()
+    plan = planner(FakeChat([{"feasible": True, "steps": steps,
+                             "rationale": "Place the part on a safe table area."}])
+                   ).analyze("move the part onto the table", WorldState())
+    assert plan.feasible and plan.steps == steps
+
+
+def test_table_cannot_be_localized_or_used_as_an_object_destination():
+    steps = [
+        {"atom": "find_object", "args": {"target": "A"}},
+        {"atom": "find_object", "args": {"target": "table"}},
+        {"atom": "reach_above", "args": {"target": "A"}},
+        {"atom": "grasp", "args": {"target": "A"}},
+        {"atom": "lift", "args": {}},
+        {"atom": "carry_to", "args": {"container": "table"}},
+        {"atom": "place_on", "args": {"target": "table"}},
+        {"atom": "verify_state", "args": {
+            "target": "A", "at": "table", "relation": "table"}},
+    ]
+    plan = planner(FakeChat([{"feasible": True, "steps": steps,
+                             "rationale": "Move A to the table."}])
+                   ).analyze("move A to the table", WorldState())
+    assert not plan.feasible and not plan.steps
+
+
+def test_table_cannot_be_verified_as_the_movable_target():
+    steps = [{"atom": "verify_state", "args": {
+        "target": "table", "at": "table", "relation": "table"}}]
+    plan = planner(FakeChat([{"feasible": True, "steps": steps,
+                             "rationale": "Verify table."}])
+                   ).analyze("verify table", WorldState())
+    assert not plan.feasible and not plan.steps
+
+
 @pytest.mark.parametrize("source,destination", [
     ("A", "B"), ("part-7", "support-9"),
     ("small yellow part near the edge", "wide purple block"),
@@ -172,6 +220,20 @@ def test_held_source_replan_can_continue_without_regrasping():
     plan = planner(FakeChat([{"feasible": True, "steps": steps}])
                    ).analyze("A onto B", state)
     assert plan.feasible and plan.steps == steps
+
+
+def test_held_object_cannot_be_released_with_generic_gripper_open():
+    state = WorldState()
+    state.set_held("A")
+    steps = [
+        {"atom": "set_gripper", "args": {"open": True}},
+        {"atom": "verify_state", "args": {
+            "target": "A", "at": "table", "relation": "table"}},
+    ]
+    plan = planner(FakeChat([{"feasible": True, "steps": steps,
+                             "rationale": "Release A."}])
+                   ).analyze("place A safely on table", state)
+    assert not plan.feasible and not plan.steps
 
 
 def test_destination_located_only_after_grasp_is_rejected():

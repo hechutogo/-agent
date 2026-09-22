@@ -39,6 +39,37 @@ def test_bad_step_falls_back_to_replan():
     assert d.kind == "replan"
 
 
+def test_table_cannot_be_injected_as_object_recovery_target():
+    chat = FakeChat([{"decision": "retry", "steps": [
+        {"atom": "find_object", "args": {"target": "table"}}]}])
+    d = reactor(chat).decide(
+        "move A to table", [], 0, WorldState(), failed("lost_object"), 1)
+    assert d.kind == "replan" and not d.steps
+
+
+@pytest.mark.parametrize("args", [
+    {"target": "table", "at": "table", "relation": "table"},
+    {"target": "A", "at": "box", "relation": "table"},
+    {"target": "A", "at": "table", "relation": "on"},
+])
+def test_recovery_cannot_inject_invalid_table_verification(args):
+    chat = FakeChat([{"decision": "retry", "steps": [
+        {"atom": "verify_state", "args": args}]}])
+    d = reactor(chat).decide(
+        "move A to table", [], 0, WorldState(), failed("verify"), 1)
+    assert d.kind == "replan" and not d.steps
+
+
+def test_recovery_cannot_open_gripper_while_holding_object():
+    state = WorldState()
+    state.set_held("A")
+    chat = FakeChat([{"decision": "replace", "steps": [
+        {"atom": "set_gripper", "args": {"open": True}}]}])
+    d = reactor(chat).decide(
+        "place A safely on table", [], 0, state, failed("verify"), 1)
+    assert d.kind == "replan" and not d.steps
+
+
 def test_fatal_forces_abort_even_if_model_retries():
     chat = FakeChat([{"thought": "", "decision": "retry", "steps": []}])
     d = reactor(chat).decide("g", [], 0, WorldState(), failed("fatal"), 1)

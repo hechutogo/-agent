@@ -16,6 +16,13 @@ def test_run_parser_seed():
     assert args.seed == 7
 
 
+def test_run_parser_view_flag():
+    args = _parser().parse_args(["run", "--view", "--seed", "0", "把 A 叠到 B 上"])
+    assert args.view is True
+    args_no_view = _parser().parse_args(["run", "把 A 叠到 B 上"])
+    assert args_no_view.view is False
+
+
 def test_benchmark_parser_output():
     args = _parser().parse_args(["benchmark", "--output", "out"])
     assert args.command == "benchmark"

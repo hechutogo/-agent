@@ -7,23 +7,41 @@ MAX_REACT_ITERS = 4
 MAX_ATOM_CALLS = 25
 MAX_LLM_CALLS = 8
 
+_SEMANTIC_ARGS = ("target", "container", "at", "relation", "open")
+
 _STAGE = {
     "find_object": "视觉定位", "reach_above": "移动", "grasp": "抓取",
     "lift": "抬起", "carry_to": "移动", "release_into": "放置",
     "verify_state": "视觉校验", "reset_arm": "复位", "set_gripper": "抓取",
-    "place_on": "叠放",
+    "place_on": "叠放", "place_on_table": "桌面放置",
 }
 
 
 class ReActExecutor:
     def __init__(self, sim, locate, kin, registry, state, planner, reactor,
-                 on_stage=None, on_event=None, ask_user=None):
+                 on_stage=None, on_event=None, ask_user=None, recorder=None):
         self.sim, self.locate, self.kin = sim, locate, kin
         self.registry, self.state = registry, state
         self.planner, self.reactor = planner, reactor
         self.on_stage = on_stage or (lambda s: None)
         self.on_event = on_event or (lambda e: None)
         self.ask_user = ask_user
+        if recorder is None:
+            from ..observability import NullRecorder
+            recorder = NullRecorder()
+        self.recorder = recorder
+
+    def _semantic_args(self, args):
+        return {k: args[k] for k in _SEMANTIC_ARGS if k in args}
+
+    def _capture_failure(self):
+        try:
+            frame = self.sim.observe()
+            self.recorder.save_rgbd(frame, note="failure scene")
+            self.recorder.save_state(self.state.snapshot(), "state-after")
+        except Exception:
+            self.recorder.log("warning", "failure artifact capture failed",
+                              logger="executor")
 
     def _emit(self, event):
         self.on_event(event)
@@ -53,7 +71,7 @@ class ReActExecutor:
         pointer = 0
         atom_calls, react_iters, llm_calls = 0, 0, 1
         ctx = AtomContext(self.sim, self.locate, self.kin, self.state,
-                          self.on_stage, lambda t: None)
+                          self.on_stage, self.recorder.trace, self.recorder)
         self._plan_event(goal, steps, statuses, pointer)
         while pointer < len(steps):
             atom_calls += 1
@@ -65,12 +83,18 @@ class ReActExecutor:
                         "text": f"第 {pointer + 1} 步：{_STAGE.get(call['atom'], call['atom'])}"
                                 + " · " + "，".join(f"{k}={v}" for k, v in call.get("args", {}).items())})
             self._emit({"type": "step", "index": pointer, "status": "active"})
+            atom_span = self.recorder.start_span(
+                f"atom:{call['atom']}", **self._semantic_args(call.get("args", {})))
             result = self.registry.get(call["atom"]).call(ctx, call.get("args", {}))
             if result.success:
+                self.recorder.end_span(atom_span, "ok")
                 statuses[pointer] = "done"
                 self._emit({"type": "step", "index": pointer, "status": "done"})
                 pointer += 1
                 continue
+            self.recorder.end_span(atom_span, "error",
+                                   result.error_kind, result.message)
+            self._capture_failure()
             statuses[pointer] = "failed"
             self._emit({"type": "step", "index": pointer, "status": "failed"})
             self._emit({"type": "activity", "kind": "observation",
@@ -85,8 +109,9 @@ class ReActExecutor:
             llm_calls += 1
             if llm_calls > MAX_LLM_CALLS:
                 return self._fail("LLM 调用预算耗尽，请简化或重置。")
-            decision = self.reactor.decide(
-                goal, steps, pointer, self.state, result, react_iters)
+            with self.recorder.span("react", attempt=react_iters):
+                decision = self.reactor.decide(
+                    goal, steps, pointer, self.state, result, react_iters)
             self._emit({"type": "react", "attempt": react_iters,
                         "thought": decision.thought, "decision": decision.kind,
                         "detail": decision.reason})
@@ -107,12 +132,17 @@ class ReActExecutor:
             self.on_stage("视觉校验")
             self._emit({"type": "activity", "kind": "observation",
                         "text": f"最终确认：{args['target']} → {args['at']}，重新读取视觉观测。"})
+            verify_span = self.recorder.start_span(
+                "final_verify", target=args["target"], at=args["at"])
             result = self.registry.get("verify_state").call(ctx, args)
             if not result.success:
+                self.recorder.end_span(verify_span, "error",
+                                       result.error_kind, result.message)
                 payload = self._fail("最终目标未获视觉确认：" + result.message)
                 if result.error_kind == "fatal":
                     payload["recovery_required"] = True
                 return payload
+            self.recorder.end_span(verify_span, "ok")
         self._emit({"type": "finish", "success": True})
         return {"success": True, "message": f"已完成：{goal}"}
 

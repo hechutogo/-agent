@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from pickparts_agent.scene.perception import Frame
+from pickparts_agent.scene.perception import (
+    Frame, table_drop_candidates, table_height)
 
 
 SPECS = [{"id": "part-17", "kind": "block", "label": "cyan part",
@@ -19,6 +20,68 @@ def sensor_frame():
 def perception(specs=SPECS):
     from pickparts_agent.scene.perception import ScenePerception
     return ScenePerception(specs)
+
+
+def table_frame():
+    height, width = 120, 160
+    depth = np.ones((height, width), dtype=float)
+    depth[8:50, 8:50] = .94
+    depth[52:68, 72:88] = .96
+    transform = np.diag([1., 1., -1., 1.])
+    transform[:3, 3] = [0., -.45, 1.72]
+    intrinsic = np.array([[300., 0, width / 2],
+                          [0, 300., height / 2],
+                          [0, 0, 1.]])
+    return Frame(np.zeros((height, width, 3), np.uint8), depth, intrinsic,
+                 transform, np.zeros(14), np.zeros(14))
+
+
+def test_table_drop_candidates_measure_support_and_avoid_obstacle_and_edges():
+    height, candidates = table_drop_candidates(
+        table_frame(), anchor=[0., -.45, .84], footprint=[.024, .024])
+    assert height == pytest.approx(.72, abs=.002)
+    assert len(candidates) > 10
+    x, y = candidates[0]
+    assert (x - .012 >= .0192 + .018 or x + .012 <= -.0256 - .018
+            or y - .012 >= -.4308 + .018 or y + .012 <= -.4756 - .018)
+    assert all(abs(px) <= .235 and -.626 <= py <= -.28
+               for px, py in candidates)
+
+
+def test_table_drop_candidates_reject_frame_without_broad_support():
+    frame = table_frame()
+    frame.depth[:] = np.nan
+    with pytest.raises(ValueError, match="table"):
+        table_drop_candidates(frame, anchor=[0., -.45, .84],
+                              footprint=[.024, .024])
+
+
+def test_floor_plane_cannot_be_used_as_table_support():
+    frame = table_frame()
+    frame.depth[:] = 1.72
+    with pytest.raises(ValueError, match="table"):
+        table_drop_candidates(frame, anchor=[0., -.45, .10],
+                              footprint=[.024, .024])
+
+
+def test_table_contact_requires_full_footprint_inside_support():
+    frame = table_frame()
+    frame.depth[:] = np.nan
+    frame.depth[10:110, 20:140] = 1.
+    with pytest.raises(ValueError, match="footprint"):
+        table_height(frame, point=[.195, -.45, .738],
+                     bbox=[135, 55, 145, 65], footprint=[.024, .024])
+
+
+def test_table_candidates_stay_on_one_connected_support_region():
+    frame = table_frame()
+    frame.depth[:] = np.nan
+    frame.depth[20:115, 55:155] = 1.
+    frame.depth[5:45, 5:45] = 1.
+    _, candidates = table_drop_candidates(
+        frame, anchor=[.10, -.42, .84], footprint=[.024, .024])
+    assert len(candidates) > 10
+    assert all(x > -.10 for x, _ in candidates)
 
 
 def test_dynamic_id_uses_full_image_and_returns_sensor_geometry():

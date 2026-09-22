@@ -2,6 +2,16 @@
 import math
 
 
+_TABLE_OBJECT_ARGS = {
+    "find_object": "target",
+    "reach_above": "target",
+    "grasp": "target",
+    "carry_to": "container",
+    "release_into": "container",
+    "place_on": "target",
+}
+
+
 class AtomRegistry:
     def __init__(self, atoms=None):
         self.atoms = {}
@@ -54,6 +64,18 @@ class AtomRegistry:
                 raise ValueError(f"Arg {key} must be a boolean")
             if "enum" in spec and value not in spec["enum"]:
                 raise ValueError(f"Arg {key} must be one of {spec['enum']}")
+        table_arg = _TABLE_OBJECT_ARGS.get(name)
+        if table_arg is not None and args.get(table_arg) == "table":
+            raise ValueError(f"{name} cannot treat table as an object")
+        if name == "verify_state":
+            target, at, relation = (
+                args.get("target"), args.get("at"), args.get("relation"))
+            if target == "table":
+                raise ValueError("Table cannot be the movable verification target")
+            if relation == "table" and at != "table":
+                raise ValueError("Table relation needs table destination")
+            if at == "table" and relation not in (None, "table"):
+                raise ValueError("Table destination needs table relation")
 
     def catalog_for_prompt(self):
         lines = []

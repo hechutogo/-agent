@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PickParts · 运行历史</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/history.css">
+</head>
+<body class="history-page">
+  <header>
+    <a class="brand" href="/" aria-label="PickParts 首页"><span class="brand-icon">⌘</span> PickParts <span class="brand-tag">LAB</span></a>
+    <div class="header-right"><span class="live-dot" id="history-dot"></span><span id="history-connection" role="status">连接运行记录</span><span class="separator"></span><a href="/">返回控制台 ↗</a></div>
+  </header>
+  <main class="history-main">
+    <div class="history-intro">
+      <div><div class="eyebrow">OBSERVABILITY / RUN EXPLORER</div><h1>每一步行动，都有迹可循<span>。</span></h1><p>从任务到调用，回看三种 Agent 的执行过程与原始证据。</p></div>
+      <button id="refresh-history" type="button" class="secondary">刷新记录</button>
+    </div>
+    <div class="history-layout">
+      <aside class="history-aside" aria-label="运行记录筛选与列表">
+        <div class="panel-heading"><h2><span class="tiny-square"></span> 运行记录</h2><span class="pill" id="run-count">0 条</span></div>
+        <div class="history-filters">
+          <label for="run-day">记录日期<input id="run-day" type="date"></label>
+          <div class="filter-pair">
+            <label for="run-agent">Agent<select id="run-agent"><option value="">全部 Agent</option><option value="pickparts">自研 PickParts</option><option value="tiptop">TiPToP 初版</option><option value="tiptop_optimized">TiPToP 优化版</option><option value="unknown">未记录 Agent</option></select></label>
+            <label for="run-status">状态<select id="run-status"><option value="">全部状态</option><option value="running">运行中</option><option value="success">已完成</option><option value="incomplete">未完成</option><option value="error">异常</option><option value="aborted">已中止</option><option value="cancelled">已取消</option><option value="interrupted">已中断</option></select></label>
+          </div>
+          <label for="run-search" class="sr-only">搜索指令、运行 ID 或结果</label>
+          <input id="run-search" type="search" placeholder="搜索指令、运行 ID 或结果…" autocomplete="off">
+          <div class="filter-note"><span>按日期读取，筛选在本地完成</span><button id="clear-filters" class="text-button" type="button">清除筛选</button></div>
+        </div>
+        <p id="list-notice" class="inline-notice" role="status" hidden></p>
+        <div id="run-list" class="run-list" role="list" aria-label="运行列表" aria-busy="true"></div>
+        <div id="list-empty" class="trace-empty" role="status"><span class="loader"></span><strong>正在读取运行记录</strong></div>
+        <div class="list-footer" id="list-footer">记录默认保留 7 天 · 每日最多显示 500 条</div>
+      </aside>
+      <section class="history-detail" aria-label="选中运行的追踪详情">
+        <div class="panel-heading detail-heading">
+          <div><div class="eyebrow" id="run-agent-label">RUN DETAIL</div><h2 id="run-title">选择一次运行</h2></div>
+          <span id="run-state" class="status-badge" hidden></span>
+        </div>
+        <p id="detail-notice" class="inline-notice" role="status" hidden></p>
+        <div id="detail-empty" class="trace-empty detail-empty" role="status"><span class="empty-glyph" aria-hidden="true">⌁</span><strong>从左侧选择一次运行</strong><span>查看动作、模型调用、日志与产物。</span></div>
+        <div id="detail-content" hidden>
+          <div class="run-overview">
+            <div class="run-identifiers"><code id="detail-run-id"></code><span id="run-time"></span><a id="run-permalink" href="/history">固定链接 ↗</a></div>
+            <p id="run-goal-text"></p>
+            <div class="run-metrics" aria-label="运行摘要">
+              <div><span>总耗时</span><strong id="metric-duration">—</strong></div>
+              <div><span>动作调用</span><strong id="metric-atoms">0</strong></div>
+              <div><span>LLM 调用</span><strong id="metric-llm">0</strong></div>
+              <div><span>ReAct 纠偏</span><strong id="metric-react">0</strong></div>
+            </div>
+            <p id="run-result" class="result-note" hidden></p>
+            <p id="run-verification" class="verification-note" hidden></p>
+          </div>
+          <div class="trace-section-heading"><h3>调用瀑布图 <span id="span-count">0</span></h3><span>展开查看属性 · 关联日志与产物</span></div>
+          <div id="span-pane" class="span-pane" role="region" aria-label="Span 调用时序" tabindex="0">
+            <div class="waterfall-axis"><span>调用 / 层级</span><div><span>0 s</span><span id="axis-middle"></span><span id="axis-end"></span></div><span>耗时</span></div>
+            <div id="span-rows"></div>
+            <p id="spans-empty" class="section-empty">尚无调用记录，运行中的数据会自动更新。</p>
+          </div>
+          <section class="logs-section" aria-label="运行日志">
+            <div class="trace-section-heading"><h3>执行日志 <span id="log-count">0</span></h3><button id="log-latest" class="text-button" type="button" hidden>回到最新 ↓</button></div>
+            <div class="log-filters">
+              <label for="log-level" class="sr-only">日志级别</label>
+              <select id="log-level"><option value="">全部级别</option><option value="debug">DEBUG</option><option value="info">INFO</option><option value="warning">WARNING</option><option value="error">ERROR</option><option value="critical">CRITICAL</option></select>
+              <label for="log-search" class="sr-only">搜索日志</label>
+              <input id="log-search" type="search" placeholder="搜索日志、来源或异常类型…" autocomplete="off">
+              <label class="follow-toggle"><input id="log-follow" type="checkbox" checked>跟随最新</label>
+            </div>
+            <div id="span-scope" class="span-scope" hidden><span id="span-scope-label"></span><button id="clear-span" type="button" class="text-button">查看全部</button></div>
+            <div id="log-lane" class="log-lane" tabindex="0" role="region" aria-label="可滚动的日志列表"><div id="log-rows"></div><p id="logs-empty" class="section-empty">暂无日志</p></div>
+          </section>
+          <section class="artifacts-section" aria-label="运行产物">
+            <div class="trace-section-heading"><h3>运行产物 <span id="artifact-count">0</span></h3><span>RGB-D / 状态 / 模型输入输出</span></div>
+            <div id="artifact-list" class="artifact-grid"></div>
+            <p id="artifacts-empty" class="section-empty">此次运行暂无产物。</p>
+          </section>
+          <div class="detail-footer"><span id="detail-updated">等待更新</span><span>原始日志已脱敏 · 错误堆栈仅保存在本地</span></div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script src="/static/ui.js"></script>
+  <script src="/static/history.js"></script>
+</body>
+</html>

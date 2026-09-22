@@ -34,17 +34,23 @@ class LLMError(RuntimeError):
 
 
 class JSONChat:
-    def __init__(self, client, model, max_repair=1, *, thinking=False):
+    def __init__(self, client, model, max_repair=1, *, thinking=False,
+                 recorder=None, role="chat"):
         self.client = client
         self.model = model
         self.max_repair = max_repair
         self.thinking = thinking
-        self._supports_thinking = supports_thinking(
-            model, getattr(client, "base_url", ""))
+        self.role = role
         if type(thinking) is not bool:
             raise ValueError("thinking must be a boolean")
+        self._supports_thinking = supports_thinking(
+            model, getattr(client, "base_url", ""))
         if thinking and not self._supports_thinking:
             raise ValueError("Endpoint/model does not support the thinking toggle")
+        if recorder is None:
+            from ..observability import NullRecorder
+            recorder = NullRecorder()
+        self.recorder = recorder
 
     def _complete(self, system, user):
         options = {"model": self.model, "messages": [
@@ -82,13 +88,17 @@ class JSONChat:
             raise ValueError("Expected a JSON object")
         return data
 
-    def json(self, system, user):
-        for attempt in range(self.max_repair + 1):
-            prompt = user if attempt == 0 else (
-                user + "\n只输出合法 JSON，不要解释或 Markdown 代码块。")
-            raw = self._complete(system, prompt)
-            try:
-                return self._parse(raw)
-            except (TypeError, ValueError):
-                continue
+    def json(self, system, user, *, label=None):
+        label = label or self.role
+        with self.recorder.span(f"llm:{label}", model=self.model):
+            for attempt in range(self.max_repair + 1):
+                prompt = user if attempt == 0 else (
+                    user + "\n只输出合法 JSON，不要解释或 Markdown 代码块。")
+                raw = self._complete(system, prompt)
+                try:
+                    data = self._parse(raw)
+                except (TypeError, ValueError):
+                    continue
+                self.recorder.save_llm(system, prompt, raw, label)
+                return data
         raise LLMError("LLM did not return valid JSON")

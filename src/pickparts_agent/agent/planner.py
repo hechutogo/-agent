@@ -13,11 +13,16 @@ A、B、box 仍是默认已知对象。catalog 不是视觉事实，world.object
 先定位并由运行时前置条件确认可见、可达、可抓取；能力确实不支持、指代冲突或有
 明确安全障碍才给出具体 blockers，不得伪造可行的空计划。
 
-搬放计划必须从 find_object 源对象、find_object 目的对象开始，二者均须在 grasp 前定位。
-顺序为 reach_above 源、grasp 源、lift、carry_to 目的、放置、verify_state、reset_arm。
+搬放到对象时必须从 find_object 源对象、find_object 目的对象开始，二者均须在
+grasp 前定位。顺序为 reach_above 源、grasp 源、lift、carry_to 目的、放置、
+verify_state、reset_arm。
 carry_to 的参数仍叫 container，但可指任意目的 ID，包括 block 或 box。
 place_on 的参数是 target（目的 ID），放置当前 held_object，不是抓取 target。
 box 用 release_into，block 上堆叠用 place_on。
+table 是运行时测量的虚拟支撑面，不是对象，严禁 find_object/carry_to/place_on(table)。
+放到桌面必须使用 find_object 源、reach_above、grasp、lift、place_on_table、
+verify_state {{target:源,at:"table",relation:"table"}}、reset_arm。
+held_object 非空时严禁 set_gripper {{open:true}} 直接释放，必须使用对应放置原子。
 verify_state 使用 target=源、at=目的 ID 或 table；
 relation 可省略，明确填写时 block 上为 on，box 内为 in，桌面为 table。
 例如 A 叠到 B：find_object A、find_object B、reach_above A、grasp A、lift、
@@ -57,7 +62,7 @@ class Planner:
         world = state.snapshot()
         user = json.dumps({"goal": goal, "world": world}, ensure_ascii=False)
         try:
-            data = self.chat.json(system, user)
+            data = self.chat.json(system, user, label="plan")
             if not isinstance(data, dict) or type(data.get("feasible")) is not bool:
                 raise ValueError("feasible must be a JSON boolean")
             feasible = data["feasible"]
@@ -102,6 +107,12 @@ class Planner:
             for key in ("target", "container", "at"):
                 if key in args and not args[key].strip():
                     raise ValueError("Object references must not be blank")
+            if (name in ("find_object", "reach_above", "grasp", "place_on")
+                    and args.get("target") == "table"):
+                raise ValueError("Table is not an object target")
+            if (name in ("carry_to", "release_into")
+                    and args.get("container") == "table"):
+                raise ValueError("Table needs place_on_table")
             if pending is not None and name != "verify_state":
                 raise ValueError("Placement must be followed by verification")
             if name == "find_object":
@@ -131,6 +142,8 @@ class Planner:
             elif name == "set_gripper":
                 gripper_open = args["open"]
                 if gripper_open:
+                    if held is not None:
+                        raise ValueError("Held objects require a placement atom")
                     held, carried, lifted = None, None, False
             elif name == "lift":
                 if held is None:
@@ -149,6 +162,12 @@ class Planner:
                 relation = ("in" if name == "release_into" or kind == "box"
                             else "on" if kind == "block" else None)
                 pending = (held, destination, relation)
+                held, carried, lifted = None, None, False
+                gripper_open = True
+            elif name == "place_on_table":
+                if held is None or not lifted:
+                    raise ValueError("Lift the held source before table placement")
+                pending = (held, "table", "table")
                 held, carried, lifted = None, None, False
                 gripper_open = True
             elif name == "verify_state":

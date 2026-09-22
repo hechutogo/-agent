@@ -30,6 +30,9 @@ where = ["src"]
 "pickparts_agent.scene" = ["robots/assets/**/*"]
 "pickparts_agent.interfaces" = ["static/*"]
 
+[tool.setuptools.exclude-package-data]
+"pickparts_agent.scene" = ["robots/assets/xlerobot/meshes/*.convex.stl"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

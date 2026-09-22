@@ -40,3 +40,19 @@ def test_table_requires_measured_contact_not_default_placement(bottom, expected)
     ctx = context_with_measurements(detection(bottom=bottom))
     result = VerifyState().call(ctx, {"target": "A", "at": "table", "relation": "table"})
     assert result.success is expected
+
+
+def test_table_verification_rejects_object_hanging_over_support_edge():
+    part = detection(x=.195, bottom=.72)
+    ctx = context_with_measurements(part)
+    depth = np.full((100, 100), np.nan)
+    depth[10:90, 10:90] = 1.
+    transform = np.diag([1., 1., -1., 1.])
+    transform[2, 3] = 1.72
+    frame = Frame(np.zeros((100, 100, 3), np.uint8), depth,
+                  np.array([[200., 0, 50], [0, 200., 50], [0, 0, 1.]]),
+                  transform, ctx.sim.qpos, np.zeros_like(ctx.sim.qpos))
+    ctx.sim.observe = lambda: frame
+    result = VerifyState().call(
+        ctx, {"target": "A", "at": "table", "relation": "table"})
+    assert not result.success

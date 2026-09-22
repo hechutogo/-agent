@@ -114,9 +114,11 @@ def main(argv=None):
                 return 0 if successful else 1
 
             from ..agent.orchestrator import build_orchestrator
+            from ..observability import build_recorder
 
+            recorder = build_recorder()
             locate = VisualLocator(sim.object_specs, vision_client, vision.model).locate
-            orchestrator = build_orchestrator(sim, locate, llm)
+            orchestrator = build_orchestrator(sim, locate, llm, recorder=recorder)
             print("Flexible atom Agent mode. Describe the task in natural language; quit to exit.")
             print("Perception: full-frame RGB-D for catalog objects; cloud vision for open descriptions.")
             turn = 0
@@ -130,7 +132,12 @@ def main(argv=None):
                         return 0
                 else:
                     text = command
-                result = orchestrator.turn(text)
+                with recorder.run("command", text) as job:
+                    result = orchestrator.turn(text)
+                    job.set_result(
+                        "success" if result["success"] else "incomplete",
+                        result["message"],
+                        result.get("recovery_required", False))
                 print(result["message"])
                 save_frame(sim.observe(), args.output / f"turn-{turn:03d}")
                 turn += 1

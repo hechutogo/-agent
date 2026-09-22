@@ -1,7 +1,8 @@
 from pickparts_agent.agent.atoms import build_default_registry
 
 EXPECTED = {"find_object", "reach_above", "grasp", "lift", "carry_to",
-            "release_into", "verify_state", "reset_arm", "set_gripper", "place_on"}
+            "release_into", "verify_state", "reset_arm", "set_gripper",
+            "place_on", "place_on_table"}
 
 
 def test_default_registry_registers_all_motion_and_relation_atoms():

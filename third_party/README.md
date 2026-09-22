@@ -1,15 +1,15 @@
 # Upstream provenance
 
-The repository was cloned from https://github.com/hechutogo/-agent.git,
-base commit `5d0f880`. Original Panda scripts remain for history, and are not
-imported by the current `pickparts_agent` entry point.
+The repository was derived from https://github.com/hechutogo/-agent.git
+at base commit `5d0f880`. The original Panda proof-of-concept entry points
+were removed after the XLeRobot package became the supported implementation.
 
 XLeRobot assets are copied from:
 
 - Repository: https://github.com/Vector-Wangel/XLeRobot
 - Revision: `a7ee564294f03484783ed053ab1550bccc3c6c09`
 - Source: `simulation/Maniskill/assets/xlerobot/`
-- Destination: `src/pickparts_agent/robots/assets/xlerobot/`
+- Destination: `src/pickparts_agent/scene/robots/assets/xlerobot/`
 - Upstream license: Apache-2.0, reproduced as `XLeRobot-LICENSE`.
 
 Local modification, 2026-09-20: in `xlerobot.urdf`, joints
