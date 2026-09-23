@@ -3,6 +3,7 @@ from tiptop_mac.agent import TiPToPAgent
 from tiptop_mac.executor import record_artifact
 from tiptop_mac.tamp import TAMPError
 from pickparts_agent.observability.events import redact
+from pickparts_agent.scene.verification import sample_until_stable
 
 from .grounding import GroundingError
 from .executor import GripStateError
@@ -129,6 +130,30 @@ class OptimizedTiPToPAgent(TiPToPAgent):
                            for p in task.goal.predicates],
         }, "optimized-plan")
 
+    def _verify(self, task, acted):
+        def wait():
+            self._activity("稳定观察", "observation",
+                           "等待物体稳定并复核视觉证据，无需重复抓取。")
+            hold = getattr(self.sim, "hold", None)
+            if hold is not None:
+                hold(8)
+
+        evidence = sample_until_stable(
+            lambda: self._observe("verify"),
+            lambda observed: (
+                self.planner.satisfies(observed[0], task.goal.predicates,
+                                       held=observed[1])
+                and (not task.require_action or acted)),
+            wait, recoverable=(ValueError, GripStateError))
+        self._save_state({
+            "confirmed": evidence.confirmed, "samples": evidence.samples,
+            "error": type(evidence.error).__name__ if evidence.error else None,
+        }, "visual-evidence")
+        if evidence.error is not None:
+            raise evidence.error
+        scene, held = evidence.value
+        return scene, held, evidence.confirmed
+
     def _run_subtask(self, task, index, result):
         acted, execution_started = False, False
         failures, excluded_table_xy = [], []
@@ -170,11 +195,8 @@ class OptimizedTiPToPAgent(TiPToPAgent):
                     # A release may succeed even when its retreat fails. Inspect
                     # the physical result before deciding whether to reexecute.
                     phase, scene, held = "verify", None, None
-                    scene, held = self._observe("verify")
+                    scene, held, verified = self._verify(task, acted)
                     grip_known = True
-                    verified = (self.planner.satisfies(scene, task.goal.predicates,
-                                                      held=held)
-                                and (not task.require_action or acted))
                     if not verified and execution["success"]:
                         failed_xy = self.planner.table_release_xy(plan)
                         if failed_xy is not None:

@@ -82,8 +82,11 @@ def test_box_table_box_round_trip_with_visual_checkpoints(inject_failure, monkey
         sim.close()
 
 
-@pytest.mark.parametrize("seed", [7, 17, 27])
-def test_stack_then_box_with_fresh_visual_checkpoints(seed, tmp_path):
+@pytest.mark.parametrize("target,support,seed", [
+    ("A", "B", 7), ("A", "B", 17), ("A", "B", 27),
+    ("B", "A", 7), ("B", "A", 17),
+])
+def test_stack_then_box_with_fresh_visual_checkpoints(target, support, seed, tmp_path):
     from tiptop_optimized.agent import OptimizedTiPToPAgent
     from tiptop_optimized.executor import RecoveringExecutor
     from tiptop_optimized.grounding import OrderedGrounder, RecoveryReactor
@@ -105,22 +108,22 @@ def test_stack_then_box_with_fresh_visual_checkpoints(seed, tmp_path):
                 if completed > len(checkpoints):
                     scene = build_scene_graph(sim.observe(), sim.object_specs)
                     checkpoints.append(planner.observed_support(
-                        scene, held=executor.reconcile(scene)).get("A"))
+                        scene, held=executor.reconcile(scene)).get(target))
 
         agent = OptimizedTiPToPAgent(
             sim, OrderedGrounder(FakeChat([{"subtasks": [
-                {"instruction": f"把 A 放到 {support}",
-                 "goal": [{"predicate": "on", "args": ["A", support]}]}
-                for support in ("B", "box")]}])),
+                {"instruction": f"把 {target} 放到 {destination}",
+                 "goal": [{"predicate": "on", "args": [target, destination]}]}
+                for destination in (support, "box")]}])),
             planner, executor, recorder=recorder, on_event=event,
             reactor=RecoveryReactor(FakeChat([
                 {"action": "reobserve", "reason": "先刷新观测再规划当前子任务"}
             ] * 8)))
         with recorder.run("physical-stack-box", f"stack then box seed={seed}",
                           agent="tiptop_optimized"):
-            result = agent.run("把A放到B上面，再把A放到盒子里")
+            result = agent.run(f"把{target}放到{support}上面，再把{target}放到盒子里")
         assert result["success"], str((result, checkpoints))
-        assert checkpoints == ["B", "box"]
+        assert checkpoints == [support, "box"]
         assert result["completed_subtasks"] == 2
         assert executor.held is executor.candidate is None
     finally:

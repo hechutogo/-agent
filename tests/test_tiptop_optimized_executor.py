@@ -155,6 +155,110 @@ def test_cartesian_error_kind_is_preserved(module, setup, monkeypatch):
     assert sim.moves == []
 
 
+@pytest.mark.parametrize("observe_fails", [False, True])
+def test_cartesian_diagnostics_saved_even_without_failure_frame(
+        module, tmp_path, monkeypatch, observe_fails):
+    sim, events, recorder = SensorSim(), [], Recorder(tmp_path)
+    executor = module.RecoveringExecutor(
+        sim, CartesianKin(), on_event=events.append, recorder=recorder)
+    observed = {"target": [0., -.45, .734], "actual_tcp": [0., -.45, .750],
+                "error_m": .016, "waypoint_index": 3}
+    monkeypatch.setattr(module, "_cartesian", lambda *a, **k: AtomResult(
+        False, "verify", "private tracking detail", observed))
+    if observe_fails:
+        def fail_observe():
+            raise RuntimeError("private camera detail")
+        sim.observe = fail_observe
+
+    with recorder.run("command"):
+        result = executor.execute(plan(pick_steps()[:1]))
+
+    assert result["error_kind"] == "verify" and result["failed_index"] == 0
+    assert "private" not in json.dumps([events, result])
+    states = [json.loads(path.read_text()) for path in
+              tmp_path.glob("artifacts/*/tiptop-optimized-failure-*.json")]
+    assert len(states) == 1
+    assert states[0]["observed"] == observed
+    assert states[0]["message"] == "private tracking detail"
+    assert states[0]["error_kind"] == "verify"
+
+
+def test_pick_baseline_precedes_descent_occlusion(setup):
+    executor, sim = setup
+    visible_locate = sim.locate
+    observations = []
+
+    def occluded_below_hover(frame, target):
+        observations.append((float(frame.qpos[2]), float(frame.qpos[-1])))
+        if frame.qpos[2] < .80 and frame.qpos[-1] >= .65:
+            raise ValueError("target occluded by descending jaw")
+        return visible_locate(frame, target)
+
+    executor.locate = occluded_below_hover
+    result = executor.execute(plan(pick_steps(), [("pick", ("A",))]))
+
+    assert result["success"] and result["acted"]
+    assert observations[0][0] >= .80
+    assert executor.reconcile(sim.scene()) == "A"
+
+
+@pytest.mark.parametrize("failure", ["missing", "camera", "geometry"])
+def test_baseline_failure_never_creates_unissued_close_candidate(setup, failure):
+    executor, sim = setup
+    if failure == "missing":
+        sim.missing = True
+    elif failure == "camera":
+        def fail_observe():
+            raise RuntimeError("private camera failure")
+        sim.observe = fail_observe
+    else:
+        sim.node.point[0] = np.nan
+
+    result = executor.execute(plan(pick_steps(), [("pick", ("A",))]))
+
+    assert result["aborted"] and not result["acted"]
+    assert executor.candidate is executor.held is None
+    assert sim.moves == []
+    assert executor._baseline is None
+    assert executor.reconcile(sim.scene(objects={})) is None
+
+
+@pytest.mark.parametrize("target", ["A", "B"])
+def test_prepared_baseline_cannot_leak_into_later_execution(setup, target):
+    executor, sim = setup
+    # This attempt observes A but never sends a close command.
+    assert executor.execute(plan(pick_steps()[:1], [("pick", ("A",))]))["success"]
+    before = len(sim.moves)
+    requested = []
+
+    def missing(frame, object_id):
+        requested.append(object_id)
+        raise ValueError("target unavailable in this attempt")
+
+    executor.locate = missing
+    result = executor.execute(plan(pick_steps(), [("pick", (target,))]))
+
+    assert result["error_kind"] == "grip_failed"
+    assert requested == [target]
+    assert len(sim.moves) == before
+    assert executor.candidate is executor.held is None
+
+
+def test_close_joint_read_failure_does_not_create_candidate(module, setup, monkeypatch):
+    executor, sim = setup
+
+    def fail_joints(ctx):
+        raise RuntimeError("private joint read failed before dispatch")
+
+    monkeypatch.setattr(module, "_arm_qpos", fail_joints)
+    result = executor.execute(plan([MotionStep("gripper", None, 0.)],
+                                   [("pick", ("A",))]))
+    assert result["error_kind"] == "fatal"
+    assert sim.moves == []
+    assert executor.candidate is executor.held is None
+    assert executor.reconcile(sim.scene()) is None
+
+
 def test_failed_grasp_visually_rejected_before_transport(setup):
     executor, sim = setup
     sim.grasp_works = False
@@ -276,6 +380,44 @@ def test_held_continuation_remeasures_shift_without_blind_open(setup):
     np.testing.assert_allclose(moves[0]["joints"][:3], [.104, -.453, .846])
     assert [m["jaw"] for m in moves] == [0., 0., .8, .8]
     assert executor.reconcile(sim.scene()) is None
+
+
+def test_transport_orientation_change_realigns_object_before_release(setup):
+    executor, sim = setup
+    original = sim.move_right
+    changed = False
+    def rotating_grasp(joints, jaw=None, **kwargs):
+        nonlocal changed
+        original(joints, jaw, **kwargs)
+        if sim.attached and joints[0] > .05 and joints[2] > .8 and not changed:
+            changed = True
+            sim.offset[0] = .020
+            sim.node = block(sim.arm_qpos()[:3] - sim.offset)
+    sim.move_right = rotating_grasp
+    result = executor.execute(plan(
+        pick_steps() + place_steps(),
+        [("pick", ("A",)), ("place", ("A", "table"))]))
+    assert result["success"]
+    assert sim.node.point[0] == pytest.approx(.10)
+
+
+def test_submillimeter_alignment_noise_preserves_validated_release(setup):
+    executor, sim = setup
+    original = sim.move_right
+    changed = False
+    def noisy(joints, jaw=None, **kwargs):
+        nonlocal changed
+        original(joints, jaw, **kwargs)
+        if sim.attached and joints[0] > .05 and not changed:
+            changed = True
+            sim.offset[0] = .0008
+            sim.node = block(sim.arm_qpos()[:3] - sim.offset)
+    sim.move_right = noisy
+    result = executor.execute(plan(
+        pick_steps() + place_steps(),
+        [("pick", ("A",)), ("place", ("A", "table"))]))
+    assert result["success"]
+    assert sim.node.point[0] == pytest.approx(.0992)
 
 
 def test_held_continuation_revalidates_latest_offset_before_motion(
@@ -520,6 +662,21 @@ def test_airborne_open_jaw_is_not_evidence_of_safe_support(module, setup):
         executor.reconcile(sim.scene())
 
 
+def test_open_and_separated_proves_release_without_claiming_placement(setup):
+    from tiptop_mac.types import Predicate
+    from tiptop_optimized.tamp import TAMPLite
+    executor, sim = setup
+    assert executor.execute(plan(pick_steps(), [("pick", ("A",))]))["success"]
+    # Tilted against an edge: neither table nor block support is established.
+    sim.node = block([.10, -.45, .780])
+    sim.qpos[-1] = .8
+    scene = sim.scene()
+    assert executor.reconcile(scene) is None
+    assert not TAMPLite(executor.kin).satisfies(
+        scene, [Predicate("on", ("A", "table"))])
+    assert executor.candidate is executor.held is None
+
+
 def test_initial_closed_jaw_without_candidate_requires_observation(module):
     sim = SensorSim()
     executor = module.RecoveringExecutor(sim, CartesianKin(), locate=sim.locate)
@@ -590,6 +747,7 @@ def test_box_containment_alone_does_not_prove_floor_support(module, setup):
     executor, sim = setup
     assert executor.execute(plan(pick_steps(), [("pick", ("A",))]))["success"]
     sim.node = block([0., -.45, .763])
+    sim.qpos[2] = .78  # Still near the jaw; separation cannot prove release.
     sim.qpos[-1] = .8
     box = SimpleNamespace(id="box", kind="box", point=np.array([0., -.45, .739]),
                           bottom_z=.720, top_z=.759,
@@ -607,21 +765,22 @@ def test_runtime_locator_error_is_fatal_not_a_recoverable_occlusion(setup):
     executor.locate = fail
     result = executor.execute(plan(pick_steps(), [("pick", ("A",))]))
     assert result["error_kind"] == "fatal" and result["acted"] is False
-    assert len(sim.moves) == 2
+    assert sim.moves == []
+    assert executor.candidate is executor.held is None
 
 
-def test_missing_locator_at_close_retains_candidate(module, setup):
+def test_missing_locator_before_close_leaves_no_candidate(setup):
     executor, sim = setup
     executor.locate = None
     result = executor.execute(plan(pick_steps(), [("pick", ("A",))]))
     assert result["error_kind"] == "grip_failed"
     sim.missing = True
-    with pytest.raises(module.GripStateError):
-        executor.reconcile(sim.scene())
-    assert len(sim.moves) == 2
+    assert executor.reconcile(sim.scene()) is None
+    assert executor.candidate is executor.held is None
+    assert sim.moves == []
 
 
-def test_pick_verification_can_use_close_baseline_without_prior_reconcile(module):
+def test_pick_verification_can_use_pregrasp_baseline_without_prior_reconcile(module):
     sim = SensorSim()
     executor = module.RecoveringExecutor(sim, CartesianKin(), locate=sim.locate)
     result = executor.execute(plan(pick_steps(), [("pick", ("A",))]))
@@ -727,6 +886,8 @@ def test_noisy_stack_support_agrees_with_planner(module, offset, extent, accepte
         assert executor.reconcile(scene) is None
         assert executor.candidate is executor.held is None
     else:
+        sim.qpos[:3] = upper.point  # No independent separation evidence.
+        scene = sim.scene(objects={"A": upper, "B": lower})
         with pytest.raises(module.GripStateError):
             executor.reconcile(scene)
     assert sim.moves == []
@@ -748,6 +909,15 @@ def test_short_airborne_observation_cannot_infer_table_contact(module):
     sim.node.bottom_z, sim.node.top_z = .750, .756
     sim.node.extent[2] = .006
     sim.qpos[2] = .76
+    executor = module.RecoveringExecutor(sim, CartesianKin())
+    with pytest.raises(module.GripStateError):
+        executor.reconcile(sim.scene())
+
+
+def test_six_mm_table_gap_near_jaw_is_not_support(module):
+    sim = SensorSim()
+    sim.node = block([0., -.45, .744])
+    sim.qpos[2] = .75
     executor = module.RecoveringExecutor(sim, CartesianKin())
     with pytest.raises(module.GripStateError):
         executor.reconcile(sim.scene())

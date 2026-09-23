@@ -3,7 +3,15 @@ import numpy as np
 
 from ...scene.perception import table_drop_candidates
 from .base import Atom, AtomResult, Check
-from .manipulation import REST_Q, _arm_qpos, _cartesian, _guard, _solve_path
+from .manipulation import (
+    REST_Q, _arm_qpos, _cartesian, _check_unheld_candidate, _guard, _solve_path,
+)
+
+
+def _check_grasp_offset(ctx):
+    if ctx.state.grasp_offset is None or ctx.state.grasp_bottom_offset is None:
+        return Check(False, "持物偏移未经确认，请先 carry_to 重新观测，不能直接放置")
+    return Check(True)
 
 
 class PlaceOnTable(Atom):
@@ -17,7 +25,7 @@ class PlaceOnTable(Atom):
             return Check(False, "未持有物体，无法放到桌面")
         if ctx.state.objects.get(held) is None:
             return Check(False, "缺少持有物体的视觉尺寸")
-        return Check(True)
+        return _check_grasp_offset(ctx)
 
     @_guard
     def run(self, ctx, args):
@@ -94,7 +102,7 @@ class ReleaseInto(Atom):
             return Check(False, "尚未定位目标容器")
         if not ctx.state.is_box(args["container"]):
             return Check(False, "目标不是盒子，请用 place_on 放到物体上")
-        return Check(True)
+        return _check_grasp_offset(ctx)
 
     @_guard
     def run(self, ctx, args):
@@ -130,7 +138,7 @@ class ResetArm(Atom):
     def check_pre(self, ctx, args):
         if ctx.state.held_object is not None:
             return Check(False, "仍在持物，不能张爪复位")
-        return Check(True)
+        return _check_unheld_candidate(ctx)
 
     @_guard
     def run(self, ctx, args):
@@ -163,7 +171,7 @@ class PlaceOn(Atom):
             return Check(False, "尚未定位支撑物体")
         if ctx.state.is_box(target):
             return Check(False, "开放盒子请用 release_into")
-        return Check(True)
+        return _check_grasp_offset(ctx)
 
     @_guard
     def run(self, ctx, args):

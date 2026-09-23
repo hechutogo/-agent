@@ -216,15 +216,15 @@ def test_failed_target_survives_ambiguous_post_failure_observation():
         calls.append(tuple(tuple(x) for x in kwargs.get("excluded_table_xy", ())))
         return original_plan(*args, **kwargs)
 
-    def ambiguous_once(phase):
+    def ambiguous_checkpoint(phase):
         nonlocal verify_calls
-        if phase == "verify" and verify_calls == 0:
+        if phase == "verify" and verify_calls < 3:
             verify_calls += 1
-            raise ValueError("temporary occlusion")
+            raise ValueError("occlusion outlasts local sampling budget")
         return original_observe(phase)
 
     agent.planner.plan = recording_plan
-    agent._observe = ambiguous_once
+    agent._observe = ambiguous_checkpoint
     def decide(context):
         contexts.append(context)
         return RecoveryDecision("reobserve", "重新观测")
@@ -249,7 +249,7 @@ def test_recovery_gets_latest_scene_and_unknown_grip_after_successful_motion():
 
     def reconcile(scene):
         calls.append(scene)
-        if len(calls) == 2:
+        if 2 <= len(calls) <= 4:
             raise GripStateError("Grasp candidate is not visible.")
         return original(scene)
 

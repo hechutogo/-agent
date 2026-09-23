@@ -51,5 +51,6 @@ class Atom:
         if out.success:
             post = self.verify(ctx, args, out)
             if not post.ok:
-                return AtomResult(False, "verify", post.reason, post.facts)
+                return AtomResult(False, "verify", post.reason,
+                                  {**out.observed, **post.facts})
         return out

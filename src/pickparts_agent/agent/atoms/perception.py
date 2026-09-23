@@ -1,7 +1,7 @@
 """Perception and relation-verification atoms."""
-import numpy as np
-
 from ...scene.perception import table_height
+from ...scene.support import in_box, on_block, on_table
+from ...scene.verification import sample_until_stable
 from .base import Atom, AtomResult, Check
 
 
@@ -76,51 +76,60 @@ class VerifyState(Atom):
                             "in" if ctx.state.is_box(at) else "on")
         if ctx.state.held_object is not None:
             return AtomResult(False, "precondition", "仍在持物，不能判定已放置")
-        frame_id = ctx.state.tick()
+        from .manipulation import _check_unheld_candidate
+        unheld = _check_unheld_candidate(ctx)
+        if not unheld.ok:
+            return AtomResult(False, "precondition", unheld.reason, unheld.facts)
         ctx.sim.hold(15)
-        for attempt in range(2):
+
+        def sample():
+            frame_id = ctx.state.tick()
             frame = ctx.sim.observe()
             try:
                 dest = (ctx.state.apply_observation(at, ctx.locate(frame, at), frame_id)
                         if at != "table" else None)
                 rec = ctx.state.apply_observation(target, ctx.locate(frame, target), frame_id)
-                break
-            except Exception as exc:
-                ctx.state.mark_missing(target)
-                if attempt == 0 and ctx.state.gripper_open:
-                    from .placement import ResetArm
-
-                    reset = ResetArm().call(ctx, {})
-                    if not reset.success:
-                        return reset
-                    continue
-                return AtomResult(False, "lost_object",
-                                  f"校验视野不完整（{type(exc).__name__}），不能断言物体仍在桌面")
-        if dest is None:
-            try:
-                measured_height = table_height(
-                    frame, rec.point, rec.bbox, footprint=rec.extent[:2])
+                if dest is None:
+                    measured_height = table_height(
+                        frame, rec.point, rec.bbox, footprint=rec.extent[:2])
+                    matched = on_table(rec, measured_height)
+                elif relation == "on":
+                    matched = on_block(rec, dest)
+                else:
+                    matched = in_box(rec, dest)
+                return rec, frame_id, matched
             except (ValueError, AttributeError):
-                return AtomResult(False, "lost_object", "桌面支撑面不可见，不能确认桌面接触")
-            matched = abs(rec.bottom_z - measured_height) < .004
-        elif relation == "on":
-            delta = np.asarray(rec.point) - dest.point
-            matched = (np.linalg.norm(delta[:2]) < .014
-                       and .018 < delta[2] < .055
-                       and abs(rec.bottom_z - dest.top_z) < .02)
-        else:
-            delta = np.asarray(rec.point) - dest.point
-            inner_half = np.asarray(dest.extent[:2]) / 2 - .006
-            footprint = np.abs(delta[:2]) + np.asarray(rec.extent[:2]) / 2
-            matched = (np.all(footprint <= inner_half + .002)
-                       and dest.bottom_z - .004 <= rec.bottom_z < dest.top_z - .006)
+                ctx.state.mark_missing(target)
+                raise
+
+        def verify():
+            return sample_until_stable(
+                sample, lambda value: value[2], lambda: ctx.sim.hold(8),
+                recoverable=(ValueError, AttributeError))
+
+        evidence = verify()
+        if (evidence.error is not None and ctx.state.gripper_open
+                and ctx.state.grasp_target is None):
+            # Only a confirmed open, released gripper may clear the view.
+            # Transient noise is handled above without issuing any motion.
+            from .placement import ResetArm
+            reset = ResetArm().call(ctx, {})
+            if not reset.success:
+                return reset
+            evidence = verify()
+        if evidence.error is not None:
+            return AtomResult(False, "lost_object",
+                              "校验视野持续不完整，无法确认放置关系",
+                              observed={"samples": evidence.samples})
+        rec, frame_id, _ = evidence.value
+        matched = evidence.confirmed
         placement = at if matched else rec.placement
         if matched:
             rec.placement = at if relation != "on" else "on:" + at
             ctx.state.update_object(rec)
         return AtomResult(True, observed={
             "placement": placement, "expected": at, "matched": bool(matched),
-            "relation": relation, "frame_id": frame_id})
+            "relation": relation, "frame_id": frame_id, "samples": evidence.samples})
 
     def verify(self, ctx, args, result):
         placement = result.observed.get("placement")

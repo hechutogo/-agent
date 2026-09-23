@@ -12,26 +12,10 @@ import time
 import numpy as np
 
 from pickparts_agent.agent.atoms.manipulation import _cartesian_waypoints
+from pickparts_agent.scene.support import in_box, on_block, on_table, stable_block_overlap
 from tiptop_mac.tamp import TAMPLite as _BaseTAMPLite
 from tiptop_mac.tamp import TAMPError, _Infeasible
 from tiptop_mac.types import MotionStep, TAMPPlan
-
-
-def stable_block_overlap(node, support, *, center=None):
-    """Accept noisy/rotated footprints only with a central, broad contact area.
-
-    The measured center must remain 2 mm inside the support on both axes and
-    at least 50% of the upper footprint must overlap. Height/contact evidence
-    is checked separately. Container walls still require full containment.
-    """
-    center = np.asarray(node.point[:2] if center is None else center)
-    base = np.asarray(support.point[:2])
-    half, base_half = np.asarray(node.extent[:2]) / 2, np.asarray(support.extent[:2]) / 2
-    overlap = np.maximum(
-        0., np.minimum(center + half, base + base_half)
-        - np.maximum(center - half, base - base_half))
-    return bool(np.all(np.abs(center - base) <= base_half - .002)
-                and np.prod(overlap) >= .50 * np.prod(2 * half))
 
 
 class CartesianPathError(ValueError):
@@ -222,19 +206,15 @@ class TAMPLite(_BaseTAMPLite):
             for other_id, other in scene.objects.items():
                 if other_id == b:
                     continue
-                if (other.kind == "block"
-                        and -.003 <= node.bottom_z - other.top_z <= .008
-                        and stable_block_overlap(node, other)):
+                if other.kind == "block" and on_block(node, other):
                     blocks.append((other.top_z, other_id))
-                elif (other.kind == "box"
-                      and other.bottom_z - .003 <= node.bottom_z <= other.top_z
-                      and self._footprint_inside(node, other, margin=-.003)):
+                elif other.kind == "box" and in_box(node, other):
                     boxes.append((other.top_z, other_id))
             if blocks:
                 support[b] = max(blocks)[1]
             elif boxes:
                 support[b] = max(boxes)[1]
-            elif (-.003 <= node.bottom_z - scene.table.top_z <= .008
+            elif (on_table(node, scene.table.top_z)
                   and self._inside_table(scene, node.point[:2], node.extent[:2])):
                 support[b] = "table"
         return support

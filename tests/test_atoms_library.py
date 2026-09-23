@@ -204,6 +204,15 @@ def test_full_motion_chain_grounds_and_holds_then_releases():
     lift = Lift().call(ctx, {"clearance": 0.10})
     assert lift.success and lift.observed["lift_m"] >= 0.1
     assert ctx.state.held_object == "A"
+    # Carry now consumes a fresh held-object measurement at destination hover.
+    original_locate = ctx.locate
+    def at_hover(frame, target):
+        if target == "A":
+            return {"point": [.085, -.30, .82], "bottom_z": .802,
+                    "top_z": .838, "extent": [.024, .024, .036],
+                    "bbox": [1, 1, 4, 4], "confidence": .99}
+        return original_locate(frame, target)
+    ctx.locate = at_hover
     carry = CarryTo().call(ctx, {"container": "box"})
     assert carry.success and np.allclose(kin.position[:2], [0.085, -0.30])
     release = ReleaseInto().call(ctx, {"container": "box"})
@@ -334,6 +343,13 @@ def test_carry_refreshes_support_moved_during_grasp():
     FindObject().call(ctx, {"target": "B"})
     ctx.state.set_held("A")
     locate.add("B", [.01, -.31, .739])
+    def observe_held(frame, target):
+        if target == "A":
+            return {"point": [.01, -.31, .82], "bottom_z": .802,
+                    "top_z": .838, "extent": [.024, .024, .036],
+                    "bbox": [1, 1, 4, 4], "confidence": .99}
+        return locate(frame, target)
+    ctx.locate = observe_held
     result = CarryTo().call(ctx, {"container": "B"})
     assert result.success
     np.testing.assert_allclose(kin.position[:2], [.01, -.31])

@@ -31,6 +31,7 @@ def test_precondition_failure_short_circuits():
 def test_postcondition_failure_maps_to_verify():
     r = DemoAtom(post=False).call(CTX, {})
     assert r.success is False and r.error_kind == "verify"
+    assert r.observed == {"v": 1}
 
 
 def test_happy_path():

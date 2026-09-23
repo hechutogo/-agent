@@ -7,6 +7,7 @@ import numpy as np
 from pickparts_agent.agent.atoms.manipulation import REST_Q, _arm_qpos, _cartesian
 from pickparts_agent.scene.kinematics import ARM_NAMES
 from pickparts_agent.scene.perception import ScenePerception
+from pickparts_agent.scene.support import on_table
 from tiptop_mac.executor import OpenLoopExecutor, _MotionFailure, record_artifact
 from .tamp import CartesianPathError, stable_block_overlap, validate_cartesian_path
 
@@ -120,7 +121,8 @@ class RecoveringExecutor(OpenLoopExecutor):
         return [z for z in heights if np.isfinite(z)]
 
     def _supported(self, node):
-        if any(-.003 <= node.bottom_z - z <= .008
+        if any((on_table(node, z) if z == self._scene.table.top_z
+                else -.003 <= node.bottom_z - z <= .008)
                for z in self._support_heights(node)):
             return True
         # Only a surrounding box explains an occluded bottom. A tilted block
@@ -163,8 +165,12 @@ class RecoveringExecutor(OpenLoopExecutor):
                 self._verify_lift(node, qpos)
             self._uncertain = False
             return self.held
-        if self._supported(node) and (jaw >= self._OPEN or not near):
+        released = jaw >= self._OPEN and not near
+        if released or (self._supported(node) and (jaw >= self._OPEN or not near)):
             self._check_empty_neighborhood(tcp)
+            # Empty grip and stable placement are separate facts. An open jaw
+            # separated from a misplaced object permits fresh corrective plans;
+            # the planner must still independently verify the target relation.
             # Remember the separated object, not an unrestricted "empty" bit.
             # Closed-jaw retries must recheck its visibility and support.
             self._empty_candidate = self.candidate if not near else None
@@ -218,15 +224,19 @@ class RecoveringExecutor(OpenLoopExecutor):
         return context
 
     def _observe_candidate(self):
-        if self.locate is None or self.candidate is None:
+        return self._observe_target(self.candidate)
+
+    def _observe_target(self, target):
+        if self.locate is None or target is None:
             raise GripStateError("Grasp verification requires a candidate and RGB-D locator.")
         frame = self.sim.observe()
         record_artifact(self.recorder, "save_rgbd", frame,
                         note="Optimized TiPToP grip observation")
         try:
-            located = self.locate(frame, self.candidate)
+            located = self.locate(frame, target)
         except ValueError as exc:
-            self._uncertain = True
+            if self.candidate is not None:
+                self._uncertain = True
             raise GripStateError("Grasp candidate is not reliably visible.") from exc
         return frame, self._geometry(located)
 
@@ -278,6 +288,7 @@ class RecoveringExecutor(OpenLoopExecutor):
                            if planned is not None else self._assumed)
                 if assumed is None:
                     assumed = max((node.top_z - node.bottom_z) / 2, .012)
+                self._assumed = assumed
                 shift = self._shift(node, tcp, assumed)
         if first is not None and first[0] == "place" and self.held is None:
             raise GripStateError("Place-only continuation requires a verified held object.")
@@ -303,6 +314,7 @@ class RecoveringExecutor(OpenLoopExecutor):
     def _execute(self, plan):
         shift = np.zeros(3)
         picks = iter(args[0] for kind, args in plan.operators if kind == "pick")
+        prepared_pick = None
         released, revalidate = False, False
         for index, step in enumerate(plan.trajectory):
             label = {"move": "移动", "gripper": "夹爪", "calibrate": "抓取验证与标定",
@@ -312,6 +324,7 @@ class RecoveringExecutor(OpenLoopExecutor):
                            "text": f"第 {index + 1} 步：{label}"})
             self.on_event({"type": "step", "index": index, "status": "active"})
             span = self.recorder.start_span(f"atom:{step.kind}", index=index)
+            motion_failure = None
             try:
                 if index == 0:
                     shift = self._prepare(plan)
@@ -319,7 +332,54 @@ class RecoveringExecutor(OpenLoopExecutor):
                         validate_cartesian_path(
                             self.kin, plan.trajectory, _arm_qpos(self._ctx),
                             shift)
+                    target = next(picks, None)
+                    if target is not None:
+                        if self.candidate is not None or self.held is not None:
+                            raise GripStateError("Cannot prepare a pick with an unresolved grasp.")
+                        # Keep this target's baseline local until close dispatch.
+                        # Initial-pose sampling avoids descent-induced occlusion.
+                        _, baseline = self._observe_target(target)
+                        prepared_pick = (target, baseline)
                 if step.kind == "move":
+                    next_step = (plan.trajectory[index + 1]
+                                 if index + 1 < len(plan.trajectory) else None)
+                    if (self.held is not None and not released
+                            and next_step is not None
+                            and next_step.kind == "gripper"
+                            and next_step.jaw is not None
+                            and next_step.jaw >= self._OPEN):
+                        # Transport rotates the wrist and changes the world-frame
+                        # grasp offset. Measure again at destination hover, before
+                        # descent, instead of placing with the source-frame offset.
+                        frame, node = self._observe_candidate()
+                        if self._resolve(node, frame.qpos) is None:
+                            raise GripStateError("Grasp was lost before placement.")
+                        tcp, _ = self._proprioception(frame.qpos)
+                        measured_shift = self._shift(node, tcp, self._assumed)
+                        # RGB-D millimetre noise must not invalidate a verified
+                        # boundary trajectory. Correct changes above 3 mm.
+                        destination = next((
+                            args[1] for kind, args in plan.operators
+                            if kind == "place" and args[0] == self.held), None)
+                        receiver = (self._scene.objects.get(destination)
+                                    if self._scene is not None else None)
+                        # Container drops tolerate lateral offset; the observed
+                        # inner margin is the meaningful correction threshold.
+                        tolerance = .003
+                        if receiver is not None and receiver.kind == "box":
+                            tolerance = max(tolerance, float(np.min(
+                                (np.asarray(receiver.extent[:2])
+                                 - node.extent[:2]) / 2 - .006)))
+                        changed = np.linalg.norm(measured_shift - shift) > tolerance
+                        if changed:
+                            shift = measured_shift
+                            revalidate = True
+                        record_artifact(
+                            self.recorder, "save_state",
+                            {"target": self.held, "grasp_offset": shift.tolist(),
+                             "measured_offset": measured_shift.tolist(),
+                             "corrected": bool(changed)},
+                            f"placement-alignment-{getattr(span, 'span_id', index)}")
                     if revalidate:
                         validate_cartesian_path(
                             self.kin, plan.trajectory[index:],
@@ -332,24 +392,28 @@ class RecoveringExecutor(OpenLoopExecutor):
                         self._ctx, np.asarray(step.position, dtype=float) + shift,
                         jaw=step.jaw)
                     if not result.success:
+                        motion_failure = result
                         raise _MotionFailure(result.error_kind, "Motion verification failed.")
                 elif step.kind == "gripper":
+                    joints = _arm_qpos(self._ctx)
                     if step.jaw is not None and step.jaw <= self._CLOSED:
-                        candidate = next(picks, None)
-                        if candidate is None:
-                            raise GripStateError("Close requires a pick operator.")
+                        if prepared_pick is None:
+                            raise GripStateError("Close requires a current pick baseline.")
+                        candidate, baseline = prepared_pick
+                        assumed = max((baseline.top_z - baseline.bottom_z) / 2, .012)
+                        # Register before dispatch: the command may act then raise.
                         self.candidate = candidate
                         self.held = self._empty_candidate = None
                         self._uncertain = True
-                        _, self._baseline = self._observe_candidate()
-                        self._assumed = max(
-                            (self._baseline.top_z - self._baseline.bottom_z) / 2, .012)
+                        self._baseline, self._assumed = baseline, assumed
+                        prepared_pick = None
+                        released = False
                     elif self.candidate is not None:
                         if not any(kind == "place" and args[0] == self.candidate
                                    for kind, args in plan.operators):
                             raise GripStateError("Opening a grasp requires a place operator.")
                         self._uncertain = True
-                    self.sim.move_right(_arm_qpos(self._ctx), jaw=step.jaw)
+                    self.sim.move_right(joints, jaw=step.jaw)
                     if step.jaw is not None and step.jaw >= self._OPEN:
                         released = True
                 elif step.kind == "reset":
@@ -372,7 +436,7 @@ class RecoveringExecutor(OpenLoopExecutor):
                     self._uncertain = True
                 self.recorder.log("error", message, logger="tiptop.optimized.executor",
                                   exc_info=True)
-                self._capture_failure(failed_index, span)
+                self._capture_failure(failed_index, span, motion_failure=motion_failure)
                 self.recorder.end_span(span, "error", kind, message)
                 if failed_index != index:
                     self.on_event({"type": "step", "index": index,
@@ -390,19 +454,24 @@ class RecoveringExecutor(OpenLoopExecutor):
                 "error_kind": None, "acted": bool(self._acted),
                 "failed_index": None}
 
-    def _capture_failure(self, index, span=None):
+    def _capture_failure(self, index, span=None, *, motion_failure=None):
+        state = {"index": index, "candidate": self.candidate, "held": self.held,
+                 "uncertain": self._uncertain, "verification": "visual_grip"}
+        if motion_failure is not None:
+            state.update(error_kind=motion_failure.error_kind,
+                         message=motion_failure.message,
+                         observed=motion_failure.observed)
         try:
             frame = self.sim.observe()
         except Exception:
             self.recorder.log("warning", "Failure observation unavailable",
                               logger="tiptop.optimized.executor")
-            return
-        record_artifact(self.recorder, "save_rgbd", frame,
-                        note="Optimized TiPToP failure; diagnostic only")
+        else:
+            record_artifact(self.recorder, "save_rgbd", frame,
+                            note="Optimized TiPToP failure; diagnostic only")
+            state["qpos"] = np.asarray(frame.qpos).tolist()
         record_artifact(self.recorder, "save_state",
-                        {"index": index, "qpos": np.asarray(frame.qpos).tolist(),
-                         "candidate": self.candidate, "held": self.held,
-                         "uncertain": self._uncertain, "verification": "visual_grip"},
+                        state,
                         f"tiptop-optimized-failure-{getattr(span, 'span_id', index)}")
 
     def _abort(self, message, error_kind="fatal", failed_index=None):
